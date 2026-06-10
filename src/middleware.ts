@@ -38,16 +38,6 @@ function hashPassword(pwd: string): string {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Force HTTPS — redirect any HTTP request to HTTPS
-  if (
-    req.headers.get("x-forwarded-proto") === "http" ||
-    req.nextUrl.protocol === "http:"
-  ) {
-    const httpsUrl = req.nextUrl.clone();
-    httpsUrl.protocol = "https:";
-    return NextResponse.redirect(httpsUrl, 301);
-  }
-
   // Allow access to the login page itself
   if (pathname === LOGIN_PATH) {
     return NextResponse.next();
@@ -72,8 +62,10 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Redirect to login page (ensure HTTPS)
-  const loginUrl = new URL(LOGIN_PATH, `https://${req.headers.get("host") || req.nextUrl.host}`);
+  // Redirect to login page using the same protocol and host
+  const loginUrl = req.nextUrl.clone();
+  loginUrl.pathname = LOGIN_PATH;
+  loginUrl.search = "";
   return NextResponse.redirect(loginUrl);
 }
 
