@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
-// AI analysis route - multi-strategy approach for Vercel + dev server compatibility
+// AI analysis route - multi-strategy approach
 const PROXY_URL = process.env.AI_PROXY_URL || "";
 const PROXY_KEY = process.env.AI_PROXY_SECRET || "lumina-ai-proxy-2026";
 const VISION_MODEL = "glm-4v-flash";
@@ -45,13 +46,8 @@ export async function POST(req: NextRequest) {
       errors.push(`Direct: ${directErr.message}`);
     }
 
-    // All strategies failed - return errors for debugging
     return NextResponse.json(
-      {
-        error: "AI analysis failed. Please try again later.",
-        debug: errors,
-        proxyUrl: PROXY_URL || "not set",
-      },
+      { error: "AI analysis failed.", debug: errors },
       { status: 500 }
     );
   } catch (error: any) {
@@ -69,10 +65,7 @@ async function proxyToDevServer(imageBase64: string, analysisType: string): Prom
   try {
     const response = await fetch(PROXY_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Proxy-Key": PROXY_KEY,
-      },
+      headers: { "Content-Type": "application/json", "X-Proxy-Key": PROXY_KEY },
       body: JSON.stringify({ imageBase64, analysisType }),
       signal: controller.signal,
     });
@@ -83,10 +76,7 @@ async function proxyToDevServer(imageBase64: string, analysisType: string): Prom
     }
 
     const data = await response.json();
-    if (data.error) {
-      throw new Error(`Proxy error: ${data.error}`);
-    }
-
+    if (data.error) throw new Error(`Proxy error: ${data.error}`);
     return NextResponse.json({ analysis: data.analysis });
   } finally {
     clearTimeout(timeout);
@@ -94,7 +84,6 @@ async function proxyToDevServer(imageBase64: string, analysisType: string): Prom
 }
 
 async function callWithZAISDK(imageBase64: string, analysisType: string): Promise<string> {
-  // Write .z-ai-config from env vars
   const baseUrl = process.env.ZAI_BASE_URL;
   const apiKey = process.env.ZAI_API_KEY;
   const token = process.env.ZAI_TOKEN;
@@ -102,36 +91,55 @@ async function callWithZAISDK(imageBase64: string, analysisType: string): Promis
   const userId = process.env.ZAI_USER_ID;
 
   if (baseUrl && apiKey) {
+    const config = JSON.stringify({ baseUrl, apiKey, token, chatId, userId });
+
+    // Try writing to multiple locations the SDK checks
+    const configPaths = [
+      path.join(process.cwd(), ".z-ai-config"),
+      path.join(os.homedir(), ".z-ai-config"),
+      "/tmp/.z-ai-config",
+    ];
+
+    for (const configPath of configPaths) {
+      try {
+        fs.writeFileSync(configPath, config);
+      } catch {
+        // Can't write to this path, try next
+      }
+    }
+
+    // Also set HOME to /tmp so SDK finds /tmp/.z-ai-config
+    const origHome = process.env.HOME;
+    process.env.HOME = "/tmp";
     try {
-      const configPath = path.join(process.cwd(), ".z-ai-config");
-      fs.writeFileSync(configPath, JSON.stringify({ baseUrl, apiKey, token, chatId, userId }));
-    } catch (writeErr: any) {
-      // Can't write config, skip
+      const ZAI = (await import("z-ai-web-dev-sdk")).default;
+      const zai = await ZAI.create();
+
+      const { systemPrompt, userPrompt } = getPrompts(analysisType);
+
+      const completion = await zai.chat.completions.createVision({
+        model: VISION_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+            ],
+          },
+        ],
+      });
+
+      const analysis = completion?.choices?.[0]?.message?.content || "";
+      if (!analysis) throw new Error("No analysis from SDK");
+      return analysis;
+    } finally {
+      process.env.HOME = origHome;
     }
   }
 
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-
-  const { systemPrompt, userPrompt } = getPrompts(analysisType);
-
-  const completion = await zai.chat.completions.createVision({
-    model: VISION_MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userPrompt },
-          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
-        ],
-      },
-    ],
-  });
-
-  const analysis = completion?.choices?.[0]?.message?.content || "";
-  if (!analysis) throw new Error("No analysis returned from SDK");
-  return analysis;
+  throw new Error("ZAI env vars not configured");
 }
 
 async function callDirectly(imageBase64: string, analysisType: string): Promise<string> {
@@ -147,7 +155,6 @@ async function callDirectly(imageBase64: string, analysisType: string): Promise<
     Authorization: `Bearer ${ZAI_API_KEY}`,
     "X-Z-AI-From": "Z",
   };
-
   if (ZAI_TOKEN) headers["X-Token"] = ZAI_TOKEN;
   if (ZAI_CHAT_ID) headers["X-Chat-Id"] = ZAI_CHAT_ID;
   if (ZAI_USER_ID) headers["X-User-Id"] = ZAI_USER_ID;
@@ -210,6 +217,5 @@ function getPrompts(analysisType: string): { systemPrompt: string; userPrompt: s
       userPrompt = "Provide a comprehensive analysis of this image covering composition, color, exposure, and overall impact. Give specific, actionable suggestions for improvement.";
       break;
   }
-
   return { systemPrompt, userPrompt };
 }
