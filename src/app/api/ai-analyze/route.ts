@@ -1,5 +1,13 @@
-import ZAI from "z-ai-web-dev-sdk";
 import { NextRequest, NextResponse } from "next/server";
+
+// ZAI API config - reads from env vars (set in Vercel/deployment dashboard)
+const ZAI_BASE_URL = process.env.ZAI_BASE_URL || "https://internal-api.z.ai/v1";
+const ZAI_API_KEY = process.env.ZAI_API_KEY || "Z.ai";
+const ZAI_TOKEN = process.env.ZAI_TOKEN || "";
+const ZAI_CHAT_ID = process.env.ZAI_CHAT_ID || "";
+const ZAI_USER_ID = process.env.ZAI_USER_ID || "";
+
+const VISION_MODEL = "glm-4v-flash";
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,8 +16,6 @@ export async function POST(req: NextRequest) {
     if (!imageBase64) {
       return NextResponse.json({ error: "No image data provided" }, { status: 400 });
     }
-
-    const zai = await ZAI.create();
 
     const systemPrompt = `You are an expert photography analyst. Analyze the provided image and give specific, actionable feedback. Be concise but thorough. Use markdown formatting with headers, bullet points, and bold text for emphasis. Structure your response clearly.`;
 
@@ -33,8 +39,21 @@ export async function POST(req: NextRequest) {
         break;
     }
 
-    const completion = await zai.chat.completions.createVision({
-      model: "glm-4v-flash",
+    // Call the ZAI Vision API directly (works on Vercel without .z-ai-config file)
+    const url = `${ZAI_BASE_URL}/chat/completions/vision`;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ZAI_API_KEY}`,
+      "X-Z-AI-From": "Z",
+    };
+
+    // Add optional auth headers if configured
+    if (ZAI_TOKEN) headers["X-Token"] = ZAI_TOKEN;
+    if (ZAI_CHAT_ID) headers["X-Chat-Id"] = ZAI_CHAT_ID;
+    if (ZAI_USER_ID) headers["X-User-Id"] = ZAI_USER_ID;
+
+    const requestBody = {
+      model: VISION_MODEL,
       messages: [
         {
           role: "system",
@@ -48,9 +67,30 @@ export async function POST(req: NextRequest) {
           ],
         },
       ],
+      thinking: { type: "disabled" },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody),
     });
 
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("Vision API error:", response.status, errorBody);
+      return NextResponse.json(
+        { error: `AI service returned error (${response.status}). Please try again.` },
+        { status: 500 }
+      );
+    }
+
+    const completion = await response.json();
     const analysis = completion?.choices?.[0]?.message?.content || "";
+
+    if (!analysis) {
+      return NextResponse.json({ error: "No analysis was generated. Please try again." }, { status: 500 });
+    }
 
     return NextResponse.json({ analysis });
   } catch (error) {
