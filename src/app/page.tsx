@@ -378,20 +378,52 @@ export default function Home() {
       const dataUrl = tempCanvas.toDataURL("image/jpeg", 0.8);
       const base64 = dataUrl.split(",")[1];
 
-      const response = await fetch("/api/ai-analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageBase64: base64,
-          analysisType: aiAnalysisType,
-        }),
-      });
+      // Try the local API route first
+      let response: Response | null = null;
+      let data: any = null;
 
-      const data = await response.json();
-      if (data.error) {
-        setAiAnalysis(`Error: ${data.error}`);
+      try {
+        response = await fetch("/api/ai-analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageBase64: base64,
+            analysisType: aiAnalysisType,
+          }),
+        });
+        data = await response.json();
+      } catch {
+        // Local API failed, try the dev server proxy
+      }
+
+      // If local API failed or returned an error, try the dev server proxy
+      if (!data || data.error) {
+        try {
+          const proxyResponse = await fetch("https://lumina-sight2.space-z.ai/api/ai-proxy", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Proxy-Key": "lumina-ai-proxy-2026",
+            },
+            body: JSON.stringify({
+              imageBase64: base64,
+              analysisType: aiAnalysisType,
+            }),
+          });
+          if (proxyResponse.ok) {
+            data = await proxyResponse.json();
+          }
+        } catch {
+          // Dev server proxy also failed
+        }
+      }
+
+      if (data?.error) {
+        setAiAnalysis(`⚠ AI service unavailable. The analysis engine requires the development server. Please try again later or use the app at lumina-sight2.space-z.ai for full AI features.`);
+      } else if (data?.analysis) {
+        setAiAnalysis(data.analysis);
       } else {
-        setAiAnalysis(data.analysis || "No analysis returned.");
+        setAiAnalysis("AI analysis is currently unavailable. Please try again later.");
       }
     } catch (err) {
       setAiAnalysis("Failed to connect to AI service. Please try again.");
