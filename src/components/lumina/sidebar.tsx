@@ -23,8 +23,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import Histogram from "./histogram";
-import { drawColorWheel, extractPalette, getColorAtPixel, type ColorInfo } from "./color-picker";
-import { drawToneCurve, TONE_PRESETS, handleCurveDrag, type ToneCurveConfig } from "./tone-editor";
+import { drawColorWheel, drawColorWheelIndicator, extractPalette, getColorAtPixel, type ColorInfo } from "./color-picker";
+import { drawToneCurve, TONE_PRESETS, handleCurveDrag, type ToneCurveConfig, DEFAULT_TONE_CONFIG } from "./tone-editor";
 import type { Terrain3DConfig } from "./terrain-3d";
 import type { AnalysisMode } from "./image-analyzer";
 import type { GuideType, GuideConfig } from "./guide-renderer";
@@ -173,28 +173,41 @@ export default function Sidebar({
   const colorWheelRef = useRef<HTMLCanvasElement>(null);
   const toneCurveRef = useRef<HTMLCanvasElement>(null);
   const [toneDragging, setToneDragging] = useState(false);
+  const [dragInputVal, setDragInputVal] = useState(-1);
 
-  // Draw color wheel
+  const [colorWheelDragging, setColorWheelDragging] = useState(false);
+
+  // Draw color wheel (with indicator if color is picked)
   useEffect(() => {
     const canvas = colorWheelRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     drawColorWheel(ctx, canvas.width);
-  }, []);
+    // Draw indicator if we have a picked color with a hue
+    if (pickedColor && pickedColor.hsl.s > 5) {
+      drawColorWheelIndicator(ctx, canvas.width, pickedColor.hsl.h);
+    }
+  }, [pickedColor]);
 
-  // Handle color wheel click — pick color from the wheel
-  const handleColorWheelClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Handle color wheel pick — shared between click and drag
+  const pickColorFromWheel = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = colorWheelRef.current;
     if (!canvas) return;
+
+    // We need to redraw the wheel first to get clean pixel data
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    drawColorWheel(ctx, canvas.width);
 
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const x = Math.floor((e.clientX - rect.left) * scaleX);
     const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    // Check bounds
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
 
     const pixel = ctx.getImageData(x, y, 1, 1).data;
     const r = pixel[0];
@@ -214,14 +227,28 @@ export default function Sidebar({
     }
   }, [onPickColor]);
 
+  const handleColorWheelMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    setColorWheelDragging(true);
+    pickColorFromWheel(e);
+  }, [pickColorFromWheel]);
+
+  const handleColorWheelMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!colorWheelDragging) return;
+    pickColorFromWheel(e);
+  }, [colorWheelDragging, pickColorFromWheel]);
+
+  const handleColorWheelMouseUp = useCallback(() => {
+    setColorWheelDragging(false);
+  }, []);
+
   // Draw tone curve
   useEffect(() => {
     const canvas = toneCurveRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    drawToneCurve(ctx, canvas.width, canvas.height, toneConfig.curvePoints, toneDragging);
-  }, [toneConfig.curvePoints, toneDragging]);
+    drawToneCurve(ctx, canvas.width, canvas.height, toneConfig.curvePoints, toneDragging, dragInputVal);
+  }, [toneConfig.curvePoints, toneDragging, dragInputVal]);
 
   // Extract palette when imageData changes
   useEffect(() => {
@@ -233,29 +260,39 @@ export default function Sidebar({
     onPaletteChange(colors);
   }, [imageData, onPaletteChange]);
 
+  // Helper: get canvas-space coordinates from mouse event
+  const getCanvasCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  }, []);
+
   // Tone curve mouse handlers
   const handleToneMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     setToneDragging(true);
     const canvas = e.currentTarget;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const newCurve = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
-    onToneCurveChange({ ...toneConfig, curvePoints: newCurve });
-  }, [toneConfig, onToneCurveChange]);
+    const { x, y } = getCanvasCoords(e, canvas);
+    const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
+    setDragInputVal(result.inputVal);
+    onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
+  }, [toneConfig, onToneCurveChange, getCanvasCoords]);
 
   const handleToneMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!toneDragging) return;
     const canvas = e.currentTarget;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const newCurve = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
-    onToneCurveChange({ ...toneConfig, curvePoints: newCurve });
-  }, [toneDragging, toneConfig, onToneCurveChange]);
+    const { x, y } = getCanvasCoords(e, canvas);
+    const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
+    setDragInputVal(result.inputVal);
+    onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
+  }, [toneDragging, toneConfig, onToneCurveChange, getCanvasCoords]);
 
   const handleToneMouseUp = useCallback(() => {
     setToneDragging(false);
+    setDragInputVal(-1);
   }, []);
 
   if (!open) return null;
@@ -345,7 +382,7 @@ export default function Sidebar({
         </div>
         <CollapsibleContent>
           <div className="px-3 pb-3 space-y-2">
-            <Histogram imageData={imageData} rgbChannels={rgbChannels} />
+            <Histogram imageData={imageData} rgbChannels={rgbChannels} curvePoints={toneConfig.curvePoints} />
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -465,16 +502,34 @@ export default function Sidebar({
               onMouseLeave={handleToneMouseUp}
             />
 
-            {/* Preset tone curve buttons */}
+            {/* Reset + Preset tone curve buttons */}
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Presets</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">Presets</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 text-xs text-orange-400 hover:text-orange-300 px-2"
+                  onClick={() => onToneCurveChange({ ...DEFAULT_TONE_CONFIG })}
+                >
+                  Reset to Flat
+                </Button>
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {TONE_PRESETS.map((preset) => (
                   <Button
                     key={preset.name}
-                    variant="outline"
+                    variant={
+                      preset.name === "Linear" && toneConfig.curvePoints.every((v, i) => v === i)
+                        ? "default"
+                        : "outline"
+                    }
                     size="sm"
-                    className="h-6 text-xs"
+                    className={`h-6 text-xs ${
+                      preset.name === "Linear" && toneConfig.curvePoints.every((v, i) => v === i)
+                        ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
+                        : ""
+                    }`}
                     onClick={() => onToneCurveChange({ ...toneConfig, curvePoints: [...preset.curve], brightness: 0, contrast: 0, shadows: 0, highlights: 0 })}
                   >
                     {preset.name}
@@ -574,7 +629,10 @@ export default function Sidebar({
                 width={120}
                 height={120}
                 className="rounded-full cursor-crosshair"
-                onClick={handleColorWheelClick}
+                onMouseDown={handleColorWheelMouseDown}
+                onMouseMove={handleColorWheelMouseMove}
+                onMouseUp={handleColorWheelMouseUp}
+                onMouseLeave={handleColorWheelMouseUp}
               />
             </div>
 

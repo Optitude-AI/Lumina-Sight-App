@@ -5,9 +5,10 @@ import { useEffect, useRef } from "react";
 export interface HistogramProps {
   imageData: ImageData | null;
   rgbChannels: { r: boolean; g: boolean; b: boolean };
+  curvePoints?: number[]; // Tone curve to apply before computing histogram
 }
 
-export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
+export default function Histogram({ imageData, rgbChannels, curvePoints }: HistogramProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -65,18 +66,35 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
     }
 
     const data = imageData.data;
+    const hasCurve = curvePoints && curvePoints.length === 256;
+    const isIdentityCurve = hasCurve && curvePoints!.every((v, i) => v === i);
 
-    // Build histograms
+    // Build histograms — apply tone curve if provided and non-trivial
     const histR = new Uint32Array(256);
     const histG = new Uint32Array(256);
     const histB = new Uint32Array(256);
     const histL = new Uint32Array(256);
 
-    for (let i = 0; i < data.length; i += 4) {
-      histR[data[i]]++;
-      histG[data[i + 1]]++;
-      histB[data[i + 2]]++;
-      const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    // Use sampling for very large images to avoid jank
+    const totalPixels = data.length / 4;
+    const sampleStep = totalPixels > 500000 ? Math.max(1, Math.floor(totalPixels / 500000)) * 4 : 4;
+
+    for (let i = 0; i < data.length; i += sampleStep) {
+      let r = data[i];
+      let g = data[i + 1];
+      let b = data[i + 2];
+
+      // Apply tone curve if it's non-trivial
+      if (hasCurve && !isIdentityCurve) {
+        r = curvePoints![r];
+        g = curvePoints![g];
+        b = curvePoints![b];
+      }
+
+      histR[r]++;
+      histG[g]++;
+      histB[b]++;
+      const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
       histL[Math.min(255, lum)]++;
     }
 
@@ -86,13 +104,14 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
       if (rgbChannels.r && histR[i] > maxVal) maxVal = histR[i];
       if (rgbChannels.g && histG[i] > maxVal) maxVal = histG[i];
       if (rgbChannels.b && histB[i] > maxVal) maxVal = histB[i];
+      if (histL[i] > maxVal) maxVal = histL[i];
     }
 
     const drawChannel = (hist: Uint32Array, color: string, active: boolean) => {
       if (!active) return;
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1 * dpr;
-      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.globalAlpha = 0.8;
       ctx.beginPath();
 
       const barWidth = w / 256;
@@ -136,7 +155,21 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
       }
     }
     ctx.stroke();
-  }, [imageData, rgbChannels]);
+
+    // Draw quarter markers at 25%, 50%, 75%
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 4]);
+    for (const pct of [0.25, 0.5, 0.75]) {
+      const x = pct * w;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+  }, [imageData, rgbChannels, curvePoints]);
 
   return (
     <canvas

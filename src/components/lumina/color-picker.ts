@@ -76,7 +76,7 @@ function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: n
 }
 
 /**
- * Draw a color wheel on a canvas context
+ * Draw a color wheel on a canvas context — improved with saturation/lightness center
  */
 export function drawColorWheel(
   ctx: CanvasRenderingContext2D,
@@ -87,7 +87,7 @@ export function drawColorWheel(
   const outerRadius = size / 2 - 4;
   const innerRadius = outerRadius * 0.55;
 
-  // Draw hue ring
+  // Draw hue ring with slight gradient for richness
   for (let angle = 0; angle < 360; angle += 1) {
     const startAngle = ((angle - 1) * Math.PI) / 180;
     const endAngle = ((angle + 1) * Math.PI) / 180;
@@ -100,14 +100,68 @@ export function drawColorWheel(
     ctx.fill();
   }
 
-  // Draw center (neutral gray)
+  // Draw a subtle border around the ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerRadius + 1, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerRadius - 1, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Draw center with saturation gradient (center = white, edges = gray)
   const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerRadius - 2);
   gradient.addColorStop(0, "#ffffff");
-  gradient.addColorStop(1, "#666666");
+  gradient.addColorStop(0.5, "#cccccc");
+  gradient.addColorStop(1, "#444444");
   ctx.beginPath();
   ctx.arc(cx, cy, innerRadius - 2, 0, Math.PI * 2);
   ctx.fillStyle = gradient;
   ctx.fill();
+
+  // Add a subtle crosshair at center
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 6, cy);
+  ctx.lineTo(cx + 6, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 6);
+  ctx.lineTo(cx, cy + 6);
+  ctx.stroke();
+}
+
+/**
+ * Draw a highlight indicator on the color wheel at a specific hue
+ */
+export function drawColorWheelIndicator(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  hue: number
+) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const outerRadius = size / 2 - 4;
+  const innerRadius = outerRadius * 0.55;
+  const midRadius = (outerRadius + innerRadius) / 2;
+
+  const angle = (hue * Math.PI) / 180 - Math.PI / 2;
+  const ix = cx + Math.cos(angle) * midRadius;
+  const iy = cy + Math.sin(angle) * midRadius;
+
+  // Draw indicator
+  ctx.beginPath();
+  ctx.arc(ix, iy, 5, 0, Math.PI * 2);
+  ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }
 
 /**
@@ -128,7 +182,8 @@ export function extractPalette(
 
   const buckets = medianCut(pixels, numColors);
 
-  return buckets.map((bucket) => {
+  // Sort by luminance for a nicer display
+  const colors = buckets.map((bucket) => {
     const avgR = Math.round(bucket.reduce((s, p) => s + p[0], 0) / bucket.length);
     const avgG = Math.round(bucket.reduce((s, p) => s + p[1], 0) / bucket.length);
     const avgB = Math.round(bucket.reduce((s, p) => s + p[2], 0) / bucket.length);
@@ -142,6 +197,36 @@ export function extractPalette(
       luminance: 0.299 * avgR + 0.587 * avgG + 0.114 * avgB,
     };
   });
+
+  // Sort by luminance (dark to light)
+  colors.sort((a, b) => a.luminance - b.luminance);
+
+  return colors;
+}
+
+/**
+ * Apply a color tint overlay to image data
+ */
+export function applyColorTint(
+  sourceData: ImageData,
+  color: ColorInfo,
+  intensity: number // 0 to 1
+): ImageData {
+  const data = new Uint8ClampedArray(sourceData.data);
+  const result = new ImageData(data, sourceData.width, sourceData.height);
+
+  const tintR = color.r;
+  const tintG = color.g;
+  const tintB = color.b;
+  const alpha = intensity * 0.3; // Max 30% tint
+
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.round(data[i] * (1 - alpha) + tintR * alpha);
+    data[i + 1] = Math.round(data[i + 1] * (1 - alpha) + tintG * alpha);
+    data[i + 2] = Math.round(data[i + 2] * (1 - alpha) + tintB * alpha);
+  }
+
+  return result;
 }
 
 function medianCut(
