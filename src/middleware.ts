@@ -48,6 +48,11 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow access to AI proxy route (has its own API key auth)
+  if (pathname === "/api/ai-proxy") {
+    return NextResponse.next();
+  }
+
   // Allow static assets and Next.js internals
   if (
     pathname.startsWith("/_next/") ||
