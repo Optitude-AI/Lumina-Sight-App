@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Yes, this looks like a working image analysis tool.  \n\n### Key Components:  \n- **Sidebar**: Present on the left, containing sections like “Analysis” (with sub-options like Luminance, Chroma, etc.), sliders for Opacity/Sensitivity, a “Histogram” section, and “Guides” (with “Rule of Thirds”).  \n- **Toolbar**: At the top, with icons (e.g., upload, grid, pencil, etc.) and a “Local only” status indicator.  \n- **Main Area**: The central region with a dashed border, an upload icon, and text prompting users to “Drop an image here or click to browse” (plus privacy messaging).  \n\n\n### Errors/Blank Areas:  \n- No visible errors (e.g., broken icons, error messages).  \n- The main area is intentionally blank (awaiting image upload) — this is expected for a tool in a “ready to load an image” state, not a flaw.  \n\nOverall, the layout is coherent and functional, with all core UI elements (sidebar, toolbar, main area) present and no obvious issues.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1781114829,
+  "id": "20260611020706ce4d2cb33da14c94",
+  "model": "glm-4.6v",
+  "object": "chat.completion",
+  "request_id": "20260611020706ce4d2cb33da14c94",
+  "usage": {
+    "completion_tokens": 232,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1005,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "total_tokens": 1237
+  }
+}
