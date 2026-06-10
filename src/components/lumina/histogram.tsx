@@ -17,30 +17,50 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    // Use the actual displayed size for crisp rendering
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.round(rect.width * dpr);
+    const height = Math.round(rect.height * dpr);
+
+    // Only resize if significantly different to avoid infinite loops
+    if (Math.abs(canvas.width - width) > 2 || Math.abs(canvas.height - height) > 2) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    const w = canvas.width;
+    const h = canvas.height;
 
     // Clear
-    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+    ctx.fillRect(0, 0, w, h);
 
     // Draw grid
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i < 5; i++) {
-      const y = (height * i) / 4;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (h * i) / 4;
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    // Vertical grid lines
+    for (let i = 1; i < 4; i++) {
+      const x = (w * i) / 4;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
       ctx.stroke();
     }
 
     if (!imageData) {
-      // Draw placeholder text
       ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-      ctx.font = "11px var(--font-geist-sans), sans-serif";
+      ctx.font = `${11 * dpr}px sans-serif`;
       ctx.textAlign = "center";
-      ctx.fillText("Load an image to see histogram", width / 2, height / 2);
+      ctx.textBaseline = "middle";
+      ctx.fillText("Load an image to see histogram", w / 2, h / 2);
       return;
     }
 
@@ -60,9 +80,9 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
       histL[Math.min(255, lum)]++;
     }
 
-    // Find max for normalization
+    // Find max for normalization (skip extreme outliers at 0 and 255)
     let maxVal = 1;
-    for (let i = 0; i < 256; i++) {
+    for (let i = 2; i < 254; i++) {
       if (rgbChannels.r && histR[i] > maxVal) maxVal = histR[i];
       if (rgbChannels.g && histG[i] > maxVal) maxVal = histG[i];
       if (rgbChannels.b && histB[i] > maxVal) maxVal = histB[i];
@@ -71,25 +91,25 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
     const drawChannel = (hist: Uint32Array, color: string, active: boolean) => {
       if (!active) return;
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 * dpr;
       ctx.globalAlpha = 0.7;
       ctx.beginPath();
 
-      const barWidth = width / 256;
+      const barWidth = w / 256;
       for (let i = 0; i < 256; i++) {
         const x = i * barWidth;
-        const barHeight = (hist[i] / maxVal) * (height - 4);
+        const barHeight = (hist[i] / maxVal) * (h - 4 * dpr);
         if (i === 0) {
-          ctx.moveTo(x, height - barHeight);
+          ctx.moveTo(x, h - barHeight);
         } else {
-          ctx.lineTo(x, height - barHeight);
+          ctx.lineTo(x, h - barHeight);
         }
       }
       ctx.stroke();
 
       // Fill area
-      ctx.lineTo(width, height);
-      ctx.lineTo(0, height);
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
       ctx.closePath();
       ctx.globalAlpha = 0.15;
       ctx.fillStyle = color;
@@ -102,17 +122,17 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
     drawChannel(histB, "#4488ff", rgbChannels.b);
 
     // Always draw luminance as a subtle overlay
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = 0.8 * dpr;
     ctx.beginPath();
-    const barWidth = width / 256;
+    const barWidth = w / 256;
     for (let i = 0; i < 256; i++) {
       const x = i * barWidth;
-      const barHeight = (histL[i] / maxVal) * (height - 4);
+      const barHeight = (histL[i] / maxVal) * (h - 4 * dpr);
       if (i === 0) {
-        ctx.moveTo(x, height - barHeight);
+        ctx.moveTo(x, h - barHeight);
       } else {
-        ctx.lineTo(x, height - barHeight);
+        ctx.lineTo(x, h - barHeight);
       }
     }
     ctx.stroke();
@@ -124,7 +144,7 @@ export default function Histogram({ imageData, rgbChannels }: HistogramProps) {
       width={280}
       height={100}
       className="w-full rounded-md"
-      style={{ imageRendering: "auto" }}
+      style={{ imageRendering: "auto", aspectRatio: "280/100", minHeight: "60px" }}
     />
   );
 }

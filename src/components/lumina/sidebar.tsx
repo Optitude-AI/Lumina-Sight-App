@@ -23,7 +23,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import Histogram from "./histogram";
-import { drawColorWheel, extractPalette, type ColorInfo } from "./color-picker";
+import { drawColorWheel, extractPalette, getColorAtPixel, type ColorInfo } from "./color-picker";
 import { drawToneCurve, TONE_PRESETS, handleCurveDrag, type ToneCurveConfig } from "./tone-editor";
 import type { Terrain3DConfig } from "./terrain-3d";
 import type { AnalysisMode } from "./image-analyzer";
@@ -47,11 +47,13 @@ export interface SidebarProps {
   onGuideConfigChange: (config: GuideConfig) => void;
   // Tone
   toneConfig: ToneCurveConfig;
-  onToneConfigChange: (config: ToneCurveConfig) => void;
+  onToneSliderChange: (config: ToneCurveConfig) => void;
+  onToneCurveChange: (config: ToneCurveConfig) => void;
   // Colour
   pickedColor: ColorInfo | null;
   palette: ColorInfo[];
   onPaletteChange: (palette: ColorInfo[]) => void;
+  onPickColor: (color: ColorInfo | null) => void;
   // 3D Terrain
   terrainConfig: Terrain3DConfig;
   onTerrainConfigChange: (config: Terrain3DConfig) => void;
@@ -87,6 +89,24 @@ const GUIDE_PRESET_COLORS = [
   { label: "Orange", color: "#f97316" },
   { label: "Red", color: "#ff0000" },
 ];
+
+/** Simple RGB to HSL conversion for color wheel picker */
+function rgbToHslSimple(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
 
 function SectionHeader({
   icon: Icon,
@@ -133,10 +153,12 @@ export default function Sidebar({
   guideConfig,
   onGuideConfigChange,
   toneConfig,
-  onToneConfigChange,
+  onToneSliderChange,
+  onToneCurveChange,
   pickedColor,
   palette,
   onPaletteChange,
+  onPickColor,
   terrainConfig,
   onTerrainConfigChange,
   hasImage,
@@ -160,6 +182,37 @@ export default function Sidebar({
     if (!ctx) return;
     drawColorWheel(ctx, canvas.width);
   }, []);
+
+  // Handle color wheel click — pick color from the wheel
+  const handleColorWheelClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = colorWheelRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.floor((e.clientX - rect.left) * scaleX);
+    const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    const pixel = ctx.getImageData(x, y, 1, 1).data;
+    const r = pixel[0];
+    const g = pixel[1];
+    const b = pixel[2];
+
+    // Only pick if not fully transparent
+    if (pixel[3] > 0) {
+      onPickColor({
+        r,
+        g,
+        b,
+        hex: `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`,
+        hsl: rgbToHslSimple(r, g, b),
+        luminance: 0.299 * r + 0.587 * g + 0.114 * b,
+      });
+    }
+  }, [onPickColor]);
 
   // Draw tone curve
   useEffect(() => {
@@ -188,8 +241,8 @@ export default function Sidebar({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const newCurve = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
-    onToneConfigChange({ ...toneConfig, curvePoints: newCurve });
-  }, [toneConfig, onToneConfigChange]);
+    onToneCurveChange({ ...toneConfig, curvePoints: newCurve });
+  }, [toneConfig, onToneCurveChange]);
 
   const handleToneMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!toneDragging) return;
@@ -198,8 +251,8 @@ export default function Sidebar({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const newCurve = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
-    onToneConfigChange({ ...toneConfig, curvePoints: newCurve });
-  }, [toneDragging, toneConfig, onToneConfigChange]);
+    onToneCurveChange({ ...toneConfig, curvePoints: newCurve });
+  }, [toneDragging, toneConfig, onToneCurveChange]);
 
   const handleToneMouseUp = useCallback(() => {
     setToneDragging(false);
@@ -422,7 +475,7 @@ export default function Sidebar({
                     variant="outline"
                     size="sm"
                     className="h-6 text-xs"
-                    onClick={() => onToneConfigChange({ ...toneConfig, curvePoints: [...preset.curve] })}
+                    onClick={() => onToneCurveChange({ ...toneConfig, curvePoints: [...preset.curve], brightness: 0, contrast: 0, shadows: 0, highlights: 0 })}
                   >
                     {preset.name}
                   </Button>
@@ -443,7 +496,7 @@ export default function Sidebar({
                 min={0}
                 max={200}
                 step={1}
-                onValueChange={([v]) => onToneConfigChange({ ...toneConfig, brightness: v - 100 })}
+                onValueChange={([v]) => onToneSliderChange({ ...toneConfig, brightness: v - 100 })}
                 className="slider-orange"
               />
             </div>
@@ -459,7 +512,7 @@ export default function Sidebar({
                 min={0}
                 max={200}
                 step={1}
-                onValueChange={([v]) => onToneConfigChange({ ...toneConfig, contrast: v - 100 })}
+                onValueChange={([v]) => onToneSliderChange({ ...toneConfig, contrast: v - 100 })}
                 className="slider-orange"
               />
             </div>
@@ -475,7 +528,7 @@ export default function Sidebar({
                 min={0}
                 max={200}
                 step={1}
-                onValueChange={([v]) => onToneConfigChange({ ...toneConfig, shadows: v - 100 })}
+                onValueChange={([v]) => onToneSliderChange({ ...toneConfig, shadows: v - 100 })}
                 className="slider-orange"
               />
             </div>
@@ -491,7 +544,7 @@ export default function Sidebar({
                 min={0}
                 max={200}
                 step={1}
-                onValueChange={([v]) => onToneConfigChange({ ...toneConfig, highlights: v - 100 })}
+                onValueChange={([v]) => onToneSliderChange({ ...toneConfig, highlights: v - 100 })}
                 className="slider-orange"
               />
             </div>
@@ -514,13 +567,14 @@ export default function Sidebar({
         </div>
         <CollapsibleContent>
           <div className="px-3 pb-3 space-y-3">
-            {/* Color wheel */}
+            {/* Color wheel — click to pick a hue */}
             <div className="flex justify-center">
               <canvas
                 ref={colorWheelRef}
                 width={120}
                 height={120}
-                className="rounded-full"
+                className="rounded-full cursor-crosshair"
+                onClick={handleColorWheelClick}
               />
             </div>
 

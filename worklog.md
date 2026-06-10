@@ -44,3 +44,26 @@ Work Log:
 Stage Summary:
 - Deployed to https://lumina-sight.com
 - All 5 issues fixed: analysis display, spiral rendering, guide colors, performance, 3D terrain scale
+
+---
+Task ID: 2
+Agent: main
+Task: Fix histogram, tone presets, and color wheel interactivity
+
+Work Log:
+- Fixed tone presets: separated onToneConfigChange into two handlers: onToneSliderChange (regenerates curve from sliders) and onToneCurveChange (preserves curve points for presets and drag)
+- Root cause: handleToneSliderChange was used for ALL tone changes including preset clicks and curve drags, but it always regenerated the curve from sliders (brightness=0, contrast=0, etc.), producing a linear curve and ignoring presets
+- Fixed tone curve drag to use onToneCurveChange so drag changes are preserved
+- Fixed preset buttons to use onToneCurveChange and reset slider values to 0 when a preset is selected
+- Fixed histogram rendering: added device pixel ratio support for crisp rendering, improved normalization by skipping extreme outlier bins (0 and 255), added vertical grid lines and aspect ratio preservation
+- Made color wheel interactive: added click handler that reads the pixel color from the canvas and sets it as the picked color via onPickColor callback
+- Added rgbToHslSimple helper function for color wheel color conversion
+- Added onPickColor prop to Sidebar and connected it to setPickedColor in page.tsx
+- Fixed compareMode reset in handleImageReset to use "analysis" instead of "original"
+
+Stage Summary:
+- Deployed to https://lumina-sight.com
+- Tone presets now work correctly — clicking a preset applies the curve shape
+- Curve drag now works — dragging on the tone curve canvas preserves the curve
+- Color wheel is now clickable — clicking picks a color and shows it in the color info section
+- Histogram rendering improved with better normalization and crisp rendering

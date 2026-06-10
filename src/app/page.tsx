@@ -99,7 +99,7 @@ export default function Home() {
     setToneConfig({ ...DEFAULT_TONE_CONFIG });
     setTerrainConfig(initialTerrainConfig);
     setPalette([]);
-    setCompareMode("original");
+    setCompareMode("analysis");
   }, []);
 
   // Handle download
@@ -161,7 +161,7 @@ export default function Home() {
     setTerrain3D((prev) => !prev);
   }, []);
 
-  // Handle tone config changes from sidebar sliders — regenerate curve from slider values
+  // Handle tone config changes from sidebar SLIDERS — regenerate curve from slider values
   const handleToneSliderChange = useCallback((newConfig: ToneCurveConfig) => {
     const newCurve = generateCurveFromSliders(
       newConfig.brightness,
@@ -170,6 +170,11 @@ export default function Home() {
       newConfig.highlights
     );
     setToneConfig({ ...newConfig, curvePoints: newCurve });
+  }, []);
+
+  // Handle tone config changes from PRESETS or CURVE DRAG — preserve the curve points as-is
+  const handleToneCurveChange = useCallback((newConfig: ToneCurveConfig) => {
+    setToneConfig(newConfig);
   }, []);
 
   return (
@@ -215,10 +220,12 @@ export default function Home() {
           guideConfig={guideConfig}
           onGuideConfigChange={setGuideConfig}
           toneConfig={toneConfig}
-          onToneConfigChange={handleToneSliderChange}
+          onToneSliderChange={handleToneSliderChange}
+          onToneCurveChange={handleToneCurveChange}
           pickedColor={pickedColor}
           palette={palette}
           onPaletteChange={setPalette}
+          onPickColor={setPickedColor}
           terrainConfig={terrainConfig}
           onTerrainConfigChange={setTerrainConfig}
           hasImage={!!image}
