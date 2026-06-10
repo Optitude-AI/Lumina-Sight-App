@@ -6,6 +6,7 @@ import os from "os";
 // AI analysis route - multi-strategy approach
 const PROXY_URL = process.env.AI_PROXY_URL || "";
 const PROXY_KEY = process.env.AI_PROXY_SECRET || "lumina-ai-proxy-2026";
+const PROXY_AUTH_COOKIE = process.env.AI_PROXY_AUTH_COOKIE || "";
 const VISION_MODEL = "glm-4v-flash";
 
 const errors: string[] = [];
@@ -60,12 +61,26 @@ export async function POST(req: NextRequest) {
 
 async function proxyToDevServer(imageBase64: string, analysisType: string): Promise<NextResponse> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    
+    // If proxy uses the standalone proxy server (X-Proxy-Key auth)
+    if (PROXY_KEY && PROXY_URL.includes("/analyze")) {
+      headers["X-Proxy-Key"] = PROXY_KEY;
+    }
+    
+    // If proxy uses the Next.js /api/ai-analyze route (cookie auth)
+    if (PROXY_AUTH_COOKIE) {
+      headers["Cookie"] = PROXY_AUTH_COOKIE;
+    }
+
     const response = await fetch(PROXY_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Proxy-Key": PROXY_KEY },
+      headers,
       body: JSON.stringify({ imageBase64, analysisType }),
       signal: controller.signal,
     });
