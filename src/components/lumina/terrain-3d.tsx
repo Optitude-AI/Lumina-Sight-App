@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useEffect, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -393,12 +393,25 @@ function TerrainGrid({ config }: { config: Terrain3DConfig }) {
 
   // Zone band lines (horizontal lines on the axis side showing zone boundaries)
   const zoneLines: THREE.Vector3[] = [];
-  // Darks band (bottom to darksY)
   zoneLines.push(new THREE.Vector3(-2.2, darksY, -2.15), new THREE.Vector3(-2.2, darksY, 2.15));
-  // Mids band
   zoneLines.push(new THREE.Vector3(-2.2, midsY, -2.15), new THREE.Vector3(-2.2, midsY, 2.15));
-  // Highlights band
   zoneLines.push(new THREE.Vector3(-2.2, highsY, -2.15), new THREE.Vector3(-2.2, highsY, 2.15));
+
+  // Elevation labels positioned along the Y-axis
+  const elevationLabels = [];
+  for (let i = 0; i <= elevSteps; i++) {
+    const yFrac = i / elevSteps;
+    const lumVal = Math.round(yFrac * 100);
+    const yPos = axisHeight * yFrac;
+    elevationLabels.push({ lumVal, yPos });
+  }
+
+  // Tonal zone labels positioned at zone boundary heights
+  const zoneLabels = [
+    { label: "Darks", y: darksY / 2, color: "#8866dd" },
+    { label: "Midtones", y: (darksY + midsY) / 2, color: "#cc9900" },
+    { label: "Highlights", y: (midsY + highsY) / 2, color: "#ffeecc" },
+  ];
 
   return (
     <group>
@@ -418,6 +431,77 @@ function TerrainGrid({ config }: { config: Terrain3DConfig }) {
       <lineSegments geometry={new THREE.BufferGeometry().setFromPoints(zoneLines)}>
         <lineBasicMaterial color="#ffffff" transparent opacity={0.15} />
       </lineSegments>
+
+      {/* Elevation labels on Y-axis */}
+      {elevationLabels.map(({ lumVal, yPos }) => (
+        <Text
+          key={`elev-${lumVal}`}
+          position={[-2.55, yPos, -2.2]}
+          rotation={[0, 0, 0]}
+          fontSize={0.1}
+          color="#999999"
+          anchorX="center"
+          anchorY="middle"
+          font={undefined}
+        >
+          {`${lumVal}%`}
+        </Text>
+      ))}
+
+      {/* Axis title */}
+      <Text
+        position={[-2.7, axisHeight / 2, -2.2]}
+        rotation={[0, 0, Math.PI / 2]}
+        fontSize={0.09}
+        color="#777777"
+        anchorX="center"
+        anchorY="middle"
+        font={undefined}
+      >
+        LUMINANCE
+      </Text>
+
+      {/* Tonal zone labels on the side */}
+      {zoneLabels.map(({ label, y, color }) => (
+        <Text
+          key={`zone-${label}`}
+          position={[2.55, y, -2.2]}
+          rotation={[0, 0, 0]}
+          fontSize={0.1}
+          color={color}
+          anchorX="center"
+          anchorY="middle"
+          font={undefined}
+        >
+          {label}
+        </Text>
+      ))}
+
+      {/* X-axis label */}
+      <Text
+        position={[0, -0.15, -2.4]}
+        rotation={[0, 0, 0]}
+        fontSize={0.09}
+        color="#777777"
+        anchorX="center"
+        anchorY="middle"
+        font={undefined}
+      >
+        IMAGE WIDTH
+      </Text>
+
+      {/* Z-axis label */}
+      <Text
+        position={[-2.4, -0.15, 0]}
+        rotation={[0, -Math.PI / 2, 0]}
+        fontSize={0.09}
+        color="#777777"
+        anchorX="center"
+        anchorY="middle"
+        font={undefined}
+      >
+        IMAGE HEIGHT
+      </Text>
     </group>
   );
 }

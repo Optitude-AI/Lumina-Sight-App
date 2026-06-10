@@ -217,7 +217,7 @@ export default function CanvasArea({
     [image, zoom, onZoomChange]
   );
 
-  // Render 2D canvas (non-terrain mode)
+  // Render 2D canvas (non-terrain mode) — debounced with requestAnimationFrame
   useEffect(() => {
     if (terrain3D && image) return; // 3D terrain handled by R3F
 
@@ -225,67 +225,84 @@ export default function CanvasArea({
     const overlay = overlayRef.current;
     if (!canvas || !overlay) return;
 
-    const ctx = canvas.getContext("2d");
-    const octx = overlay.getContext("2d");
-    if (!ctx || !octx) return;
+    let cancelled = false;
 
-    if (!image || !imageData) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      octx.clearRect(0, 0, overlay.width, overlay.height);
-      return;
-    }
+    // Use requestAnimationFrame to debounce rapid state changes
+    const rafId = requestAnimationFrame(() => {
+      if (cancelled) return;
 
-    // Size canvases to image
-    canvas.width = image.width;
-    canvas.height = image.height;
-    overlay.width = image.width;
-    overlay.height = image.height;
+      const ctx = canvas.getContext("2d");
+      const octx = overlay.getContext("2d");
+      if (!ctx || !octx) return;
 
-    // Draw base image or analysis
-    if (compareMode === "original" || !analysisActive) {
-      if (toneConfig && originalDataRef.current) {
-        const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
-          toneConfig.brightness === 0 &&
-          toneConfig.contrast === 0 &&
-          toneConfig.shadows === 0 &&
-          toneConfig.highlights === 0;
-        
-        if (isDefaultCurve) {
-          ctx.drawImage(image, 0, 0);
-        } else {
-          const toned = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
-          ctx.putImageData(toned, 0, 0);
+      if (!image || !imageData) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        octx.clearRect(0, 0, overlay.width, overlay.height);
+        return;
+      }
+
+      // Size canvases to image
+      canvas.width = image.width;
+      canvas.height = image.height;
+      overlay.width = image.width;
+      overlay.height = image.height;
+
+      // Draw base image or analysis
+      // Show analysis when: analysisActive AND compareMode === "analysis"
+      // Show original when: !analysisActive OR compareMode === "original"
+      const showAnalysis = analysisActive && compareMode === "analysis";
+
+      if (showAnalysis) {
+        let sourceData = originalDataRef.current || imageData;
+        if (toneConfig && originalDataRef.current) {
+          const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
+            toneConfig.brightness === 0 &&
+            toneConfig.contrast === 0 &&
+            toneConfig.shadows === 0 &&
+            toneConfig.highlights === 0;
+          
+          if (!isDefaultCurve) {
+            sourceData = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
+          }
         }
+        const analyzed = applyAnalysis(
+          sourceData,
+          analysisMode,
+          opacity / 100,
+          sensitivity
+        );
+        ctx.putImageData(analyzed, 0, 0);
       } else {
-        ctx.drawImage(image, 0, 0);
-      }
-    } else {
-      let sourceData = originalDataRef.current || imageData;
-      if (toneConfig && originalDataRef.current) {
-        const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
-          toneConfig.brightness === 0 &&
-          toneConfig.contrast === 0 &&
-          toneConfig.shadows === 0 &&
-          toneConfig.highlights === 0;
-        
-        if (!isDefaultCurve) {
-          sourceData = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
+        // Show original image (possibly with tone curve)
+        if (toneConfig && originalDataRef.current) {
+          const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
+            toneConfig.brightness === 0 &&
+            toneConfig.contrast === 0 &&
+            toneConfig.shadows === 0 &&
+            toneConfig.highlights === 0;
+          
+          if (isDefaultCurve) {
+            ctx.drawImage(image, 0, 0);
+          } else {
+            const toned = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
+            ctx.putImageData(toned, 0, 0);
+          }
+        } else {
+          ctx.drawImage(image, 0, 0);
         }
       }
-      const analyzed = applyAnalysis(
-        sourceData,
-        analysisMode,
-        opacity / 100,
-        sensitivity
-      );
-      ctx.putImageData(analyzed, 0, 0);
-    }
 
-    // Draw guides on overlay
-    octx.clearRect(0, 0, overlay.width, overlay.height);
-    if (guidesActive && guideConfig.activeGuide) {
-      drawGuides(octx, image.width, image.height, guideConfig, originalDataRef.current);
-    }
+      // Draw guides on overlay
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      if (guidesActive && guideConfig.activeGuide) {
+        drawGuides(octx, image.width, image.height, guideConfig, originalDataRef.current);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
   }, [
     image,
     imageData,

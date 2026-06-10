@@ -23,7 +23,7 @@ export function drawGuides(
   ctx.save();
 
   const color = guides.guideColor;
-  const colorDim = color.replace(")", ", 0.4)").replace("rgb(", "rgba(");
+  const colorDim = hexToRgba(color.startsWith("#") ? color : "#f97316", 0.4);
   const thickness = guides.thickness;
 
   switch (guides.activeGuide) {
@@ -167,36 +167,72 @@ function drawGoldenSpiral(
   ctx.lineWidth = thickness;
   ctx.setLineDash([]);
 
-  // Draw Fibonacci spiral starting from the largest arc
-  const cx = w / phi;
-  const cy = h / phi;
+  // Build the Fibonacci spiral using quarter-arc segments
+  // that subdivide the golden rectangle progressively.
+  // Start from the largest square and work inward.
 
+  // The golden rectangle fills the image: w × h
+  // We compute the sequence of Fibonacci-like squares from large to small.
+
+  // Generate Fibonacci numbers until they exceed the image
+  const fibs: number[] = [1, 1];
+  while (fibs[fibs.length - 1] < Math.max(w, h) * 2) {
+    fibs.push(fibs[fibs.length - 1] + fibs[fibs.length - 2]);
+  }
+
+  // Use a unit square size that makes the spiral fill the image
+  // The spiral is drawn inside the golden rectangle.
+  // Scale: the total Fibonacci number that covers the largest dimension
+  const fibIdx = fibs.length - 1;
+  // The golden rectangle has sides in ratio phi:1
+  // We want the spiral to fill the entire image area
+
+  // Simple approach: draw the spiral as quarter arcs at each step of the golden rectangle subdivision
+  // Direction cycle: right, down, left, up (each quarter turn)
+  // The spiral starts at the "eye" of the spiral (the small end) and grows outward
+
+  // We'll use a logarithmic spiral parametrically:
+  // r(θ) = a * e^(b*θ) where b = ln(phi) / (π/2) so that r grows by phi every quarter turn
+  const b = Math.log(phi) / (Math.PI / 2);
+  // Scale 'a' so that at the final angle, the spiral fills the image
+  // The spiral center is at the golden ratio point of the image
+  const spiralCX = w / phi;
+  const spiralCY = h / phi;
+
+  // We want the maximum extent of the spiral to approximately fill the image
+  // The farthest point from center is roughly at angle 2π * numTurns
+  // r_max = a * e^(b * 2π * numTurns)
+  // We want r_max ≈ distance from center to the farthest corner
+  const maxDist = Math.sqrt(
+    Math.max(spiralCX, w - spiralCX) ** 2 +
+    Math.max(spiralCY, h - spiralCY) ** 2
+  );
   const numTurns = 4;
-  const startRadius = Math.max(w, h) * 0.02;
+  const totalAngle = Math.PI / 2 * 4 * numTurns; // 4 quarter-turns per full turn × numTurns
+  const a = maxDist / Math.exp(b * totalAngle);
 
   ctx.beginPath();
-  ctx.moveTo(cx + startRadius, cy);
 
-  let currentX = cx + startRadius;
-  let currentY = cy;
-  let angle = 0;
+  const steps = numTurns * 80; // smooth curve with many small segments
+  for (let i = 0; i <= steps; i++) {
+    const theta = (i / steps) * totalAngle;
+    const r = a * Math.exp(b * theta);
+    const x = spiralCX + r * Math.cos(theta);
+    const y = spiralCY + r * Math.sin(theta);
 
-  for (let i = 0; i < numTurns * 4; i++) {
-    const radius = startRadius * Math.pow(phi, i / 4);
-    const arcAngle = Math.PI / 2;
-    const startAngle = angle;
-    const endAngle = angle + arcAngle;
-
-    const arcCX = currentX - radius * Math.cos(startAngle);
-    const arcCY = currentY - radius * Math.sin(startAngle);
-
-    ctx.arc(arcCX, arcCY, radius, startAngle, endAngle);
-
-    currentX = arcCX + radius * Math.cos(endAngle);
-    currentY = arcCY + radius * Math.sin(endAngle);
-    angle = endAngle;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
   ctx.stroke();
+
+  // Draw a small dot at the spiral's focal point (the "eye")
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(spiralCX, spiralCY, 3 + thickness, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawDiagonals(

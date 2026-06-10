@@ -69,8 +69,8 @@ export default function Home() {
   const [analysisActive, setAnalysisActive] = useState(true);
   const [guidesActive, setGuidesActive] = useState(false);
 
-  // Compare state
-  const [compareMode, setCompareMode] = useState<"original" | "analysis">("original");
+  // Compare state — "analysis" = showing analysis (default when analysis active), "original" = showing original
+  const [compareMode, setCompareMode] = useState<"original" | "analysis">("analysis");
 
   // Zoom state
   const [zoom, setZoom] = useState(100);
@@ -161,13 +161,7 @@ export default function Home() {
     setTerrain3D((prev) => !prev);
   }, []);
 
-  // Handle tone config changes (regenerate curve when sliders change)
-  const handleToneConfigChange = useCallback((newConfig: ToneCurveConfig) => {
-    // Check if slider values changed (not just curve points from dragging)
-    setToneConfig(newConfig);
-  }, []);
-
-  // Regenerate curve from sliders when slider values change
+  // Handle tone config changes from sidebar sliders — regenerate curve from slider values
   const handleToneSliderChange = useCallback((newConfig: ToneCurveConfig) => {
     const newCurve = generateCurveFromSliders(
       newConfig.brightness,
