@@ -2,17 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-// AI analysis route - works on both dev server and Vercel
-// Strategy 1: If AI_PROXY_URL is set, proxy to the dev server (which can reach internal-api.z.ai)
-// Strategy 2: Otherwise, try writing .z-ai-config from env vars and use the ZAI SDK directly
-// Strategy 3: If SDK fails, try calling the API directly with env var credentials
-
+// AI analysis route - multi-strategy approach for Vercel + dev server compatibility
 const PROXY_URL = process.env.AI_PROXY_URL || "";
 const PROXY_KEY = process.env.AI_PROXY_SECRET || "lumina-ai-proxy-2026";
-
 const VISION_MODEL = "glm-4v-flash";
 
+const errors: string[] = [];
+
 export async function POST(req: NextRequest) {
+  errors.length = 0;
+
   try {
     const { imageBase64, analysisType } = await req.json();
 
@@ -20,71 +19,82 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No image data provided" }, { status: 400 });
     }
 
-    // Strategy 1: Proxy to dev server (recommended for Vercel deployment)
+    // Strategy 1: Proxy to dev server
     if (PROXY_URL) {
       try {
-        return await proxyToDevServer(imageBase64, analysisType);
-      } catch (proxyErr) {
-        console.error("Proxy failed, falling back to direct:", proxyErr);
-        // Fall through to direct approach
+        const result = await proxyToDevServer(imageBase64, analysisType);
+        return result;
+      } catch (proxyErr: any) {
+        errors.push(`Proxy: ${proxyErr.message}`);
       }
     }
 
-    // Strategy 2: Write .z-ai-config from env vars and use ZAI SDK
+    // Strategy 2: Write .z-ai-config and use ZAI SDK
     try {
       const analysis = await callWithZAISDK(imageBase64, analysisType);
       return NextResponse.json({ analysis });
-    } catch (sdkErr) {
-      console.error("SDK approach failed:", sdkErr);
+    } catch (sdkErr: any) {
+      errors.push(`SDK: ${sdkErr.message}`);
     }
 
-    // Strategy 3: Direct API call with env var credentials
+    // Strategy 3: Direct API call
     try {
       const analysis = await callDirectly(imageBase64, analysisType);
       return NextResponse.json({ analysis });
-    } catch (directErr) {
-      console.error("Direct approach failed:", directErr);
+    } catch (directErr: any) {
+      errors.push(`Direct: ${directErr.message}`);
     }
 
+    // All strategies failed - return errors for debugging
     return NextResponse.json(
-      { error: "All AI analysis methods failed. Please try again later." },
+      {
+        error: "AI analysis failed. Please try again later.",
+        debug: errors,
+        proxyUrl: PROXY_URL || "not set",
+      },
       { status: 500 }
     );
-  } catch (error) {
-    console.error("AI analysis error:", error);
+  } catch (error: any) {
     return NextResponse.json(
-      { error: "Failed to analyze image. Please try again." },
+      { error: "Failed to analyze image.", debug: [error.message] },
       { status: 500 }
     );
   }
 }
 
 async function proxyToDevServer(imageBase64: string, analysisType: string): Promise<NextResponse> {
-  const response = await fetch(PROXY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Proxy-Key": PROXY_KEY,
-    },
-    body: JSON.stringify({ imageBase64, analysisType }),
-    signal: AbortSignal.timeout(60000), // 60s timeout
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Proxy error ${response.status}: ${errorBody}`);
+  try {
+    const response = await fetch(PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Proxy-Key": PROXY_KEY,
+      },
+      body: JSON.stringify({ imageBase64, analysisType }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Proxy ${response.status}: ${errorBody.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(`Proxy error: ${data.error}`);
+    }
+
+    return NextResponse.json({ analysis: data.analysis });
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const data = await response.json();
-  if (data.error) {
-    throw new Error(`Proxy returned error: ${data.error}`);
-  }
-
-  return NextResponse.json({ analysis: data.analysis });
 }
 
 async function callWithZAISDK(imageBase64: string, analysisType: string): Promise<string> {
-  // Write .z-ai-config from env vars if they exist
+  // Write .z-ai-config from env vars
   const baseUrl = process.env.ZAI_BASE_URL;
   const apiKey = process.env.ZAI_API_KEY;
   const token = process.env.ZAI_TOKEN;
@@ -92,16 +102,14 @@ async function callWithZAISDK(imageBase64: string, analysisType: string): Promis
   const userId = process.env.ZAI_USER_ID;
 
   if (baseUrl && apiKey) {
-    const configPath = path.join(process.cwd(), ".z-ai-config");
-    const config = JSON.stringify({ baseUrl, apiKey, token, chatId, userId });
     try {
-      fs.writeFileSync(configPath, config);
-    } catch {
-      // Can't write config, fall through
+      const configPath = path.join(process.cwd(), ".z-ai-config");
+      fs.writeFileSync(configPath, JSON.stringify({ baseUrl, apiKey, token, chatId, userId }));
+    } catch (writeErr: any) {
+      // Can't write config, skip
     }
   }
 
-  // Dynamic import to avoid build-time issues
   const ZAI = (await import("z-ai-web-dev-sdk")).default;
   const zai = await ZAI.create();
 
@@ -146,37 +154,42 @@ async function callDirectly(imageBase64: string, analysisType: string): Promise<
 
   const { systemPrompt, userPrompt } = getPrompts(analysisType);
 
-  const requestBody = {
-    model: VISION_MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userPrompt },
-          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: VISION_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+            ],
+          },
         ],
-      },
-    ],
-    thinking: { type: "disabled" },
-  };
+        thinking: { type: "disabled" },
+      }),
+      signal: controller.signal,
+    });
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(60000),
-  });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`API ${response.status}: ${errorBody.substring(0, 200)}`);
+    }
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Vision API error ${response.status}: ${errorBody}`);
+    const completion = await response.json();
+    const analysis = completion?.choices?.[0]?.message?.content || "";
+    if (!analysis) throw new Error("No analysis from direct API");
+    return analysis;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const completion = await response.json();
-  const analysis = completion?.choices?.[0]?.message?.content || "";
-  if (!analysis) throw new Error("No analysis returned from direct API");
-  return analysis;
 }
 
 function getPrompts(analysisType: string): { systemPrompt: string; userPrompt: string } {
