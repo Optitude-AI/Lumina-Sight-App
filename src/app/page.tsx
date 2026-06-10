@@ -7,6 +7,23 @@ import CanvasArea from "@/components/lumina/canvas-area";
 import type { AnalysisMode } from "@/components/lumina/image-analyzer";
 import type { GuideConfig } from "@/components/lumina/guide-renderer";
 import type { ColorInfo } from "@/components/lumina/color-picker";
+import type { Terrain3DConfig, DEFAULT_TERRAIN_CONFIG } from "@/components/lumina/terrain-3d";
+import { type ToneCurveConfig, DEFAULT_TONE_CONFIG, generateCurveFromSliders } from "@/components/lumina/tone-editor";
+
+const initialTerrainConfig: Terrain3DConfig = {
+  elevationScale: 3,
+  resolution: 128,
+  colorMode: "original",
+  darksCeiling: 25,
+  midtonesCeiling: 65,
+  darksElevation: 1.0,
+  midtonesElevation: 1.0,
+  highlightsElevation: 1.0,
+  scaleGrid: true,
+  wireframe: false,
+  autoRotate: false,
+  contourLines: false,
+};
 
 export default function Home() {
   // Image state
@@ -24,14 +41,22 @@ export default function Home() {
   const [sensitivity, setSensitivity] = useState(5);
 
   // Guide state
-  const [guides, setGuides] = useState<GuideConfig>({
-    thirds: false,
-    goldenRatio: false,
-    goldenSpiral: false,
-    diagonals: false,
-    center: false,
-    symmetry: false,
+  const [guideConfig, setGuideConfig] = useState<GuideConfig>({
+    activeGuide: null,
+    thickness: 1.5,
+    guideColor: "#ffffff",
   });
+
+  // Tone state
+  const [toneConfig, setToneConfig] = useState<ToneCurveConfig>({ ...DEFAULT_TONE_CONFIG });
+
+  // Color state
+  const [pickedColor, setPickedColor] = useState<ColorInfo | null>(null);
+  const [rgbChannels, setRgbChannels] = useState({ r: true, g: true, b: true });
+  const [palette, setPalette] = useState<ColorInfo[]>([]);
+
+  // 3D Terrain state
+  const [terrainConfig, setTerrainConfig] = useState<Terrain3DConfig>(initialTerrainConfig);
 
   // Tool states
   const [pipetteActive, setPipetteActive] = useState(false);
@@ -44,12 +69,11 @@ export default function Home() {
   const [analysisActive, setAnalysisActive] = useState(true);
   const [guidesActive, setGuidesActive] = useState(false);
 
-  // Color state
-  const [pickedColor, setPickedColor] = useState<ColorInfo | null>(null);
-  const [rgbChannels, setRgbChannels] = useState({ r: true, g: true, b: true });
-
   // Compare state
   const [compareMode, setCompareMode] = useState<"original" | "analysis">("original");
+
+  // Zoom state
+  const [zoom, setZoom] = useState(100);
 
   // Handle image load
   const handleImageLoad = useCallback((img: HTMLImageElement, data: ImageData) => {
@@ -67,6 +91,15 @@ export default function Home() {
     setFocusActive(false);
     setScanActive(false);
     setPaletteActive(false);
+    setCompareActive(false);
+    setAnalysisActive(true);
+    setGuidesActive(false);
+    setZoom(100);
+    setGuideConfig({ activeGuide: null, thickness: 1.5, guideColor: "#ffffff" });
+    setToneConfig({ ...DEFAULT_TONE_CONFIG });
+    setTerrainConfig(initialTerrainConfig);
+    setPalette([]);
+    setCompareMode("original");
   }, []);
 
   // Handle download
@@ -89,46 +122,60 @@ export default function Home() {
 
   const handleTogglePipette = useCallback(() => {
     setPipetteActive((prev) => !prev);
-    if (!pipetteActive) {
-      setFocusActive(false);
-      setScanActive(false);
-      setPaletteActive(false);
-    }
+    if (pipetteActive) return;
+    setFocusActive(false);
+    setScanActive(false);
+    setPaletteActive(false);
   }, [pipetteActive]);
 
   const handleToggleFocus = useCallback(() => {
     setFocusActive((prev) => !prev);
-    if (!focusActive) {
-      setPipetteActive(false);
-      setScanActive(false);
-      setPaletteActive(false);
-    }
+    if (focusActive) return;
+    setPipetteActive(false);
+    setScanActive(false);
+    setPaletteActive(false);
   }, [focusActive]);
 
   const handleToggleScan = useCallback(() => {
     setScanActive((prev) => !prev);
-    if (!scanActive) {
-      setPipetteActive(false);
-      setFocusActive(false);
-      setPaletteActive(false);
-    }
+    if (scanActive) return;
+    setPipetteActive(false);
+    setFocusActive(false);
+    setPaletteActive(false);
   }, [scanActive]);
 
   const handleTogglePalette = useCallback(() => {
     setPaletteActive((prev) => !prev);
-    if (!paletteActive) {
-      setPipetteActive(false);
-      setFocusActive(false);
-      setScanActive(false);
-    }
+    if (paletteActive) return;
+    setPipetteActive(false);
+    setFocusActive(false);
+    setScanActive(false);
   }, [paletteActive]);
 
   const handleToggleCompare = useCallback(() => {
     setCompareActive((prev) => !prev);
+    setCompareMode((prev) => prev === "original" ? "analysis" : "original");
   }, []);
 
   const handleToggleTerrain = useCallback(() => {
     setTerrain3D((prev) => !prev);
+  }, []);
+
+  // Handle tone config changes (regenerate curve when sliders change)
+  const handleToneConfigChange = useCallback((newConfig: ToneCurveConfig) => {
+    // Check if slider values changed (not just curve points from dragging)
+    setToneConfig(newConfig);
+  }, []);
+
+  // Regenerate curve from sliders when slider values change
+  const handleToneSliderChange = useCallback((newConfig: ToneCurveConfig) => {
+    const newCurve = generateCurveFromSliders(
+      newConfig.brightness,
+      newConfig.contrast,
+      newConfig.shadows,
+      newConfig.highlights
+    );
+    setToneConfig({ ...newConfig, curvePoints: newCurve });
   }, []);
 
   return (
@@ -155,6 +202,8 @@ export default function Home() {
         hasImage={!!image}
         onReset={handleImageReset}
         onDownload={handleDownload}
+        zoom={zoom}
+        onZoomChange={setZoom}
       />
 
       <div className="flex flex-1 min-h-0">
@@ -166,18 +215,19 @@ export default function Home() {
           onOpacityChange={setOpacity}
           sensitivity={sensitivity}
           onSensitivityChange={setSensitivity}
-          guides={guides}
-          onGuidesChange={setGuides}
           imageData={imageData}
           rgbChannels={rgbChannels}
           onRgbChannelsChange={setRgbChannels}
+          guideConfig={guideConfig}
+          onGuideConfigChange={setGuideConfig}
+          toneConfig={toneConfig}
+          onToneConfigChange={handleToneSliderChange}
           pickedColor={pickedColor}
-          compareMode={compareMode}
-          onCompareModeChange={setCompareMode}
-          analysisActive={analysisActive}
-          guidesActive={guidesActive}
-          paletteActive={paletteActive}
-          compareActive={compareActive}
+          palette={palette}
+          onPaletteChange={setPalette}
+          terrainConfig={terrainConfig}
+          onTerrainConfigChange={setTerrainConfig}
+          hasImage={!!image}
         />
 
         <CanvasArea
@@ -188,7 +238,7 @@ export default function Home() {
           analysisMode={analysisMode}
           opacity={opacity}
           sensitivity={sensitivity}
-          guides={guides}
+          guideConfig={guideConfig}
           pipetteActive={pipetteActive}
           onPickColor={setPickedColor}
           compareMode={compareMode}
@@ -196,6 +246,10 @@ export default function Home() {
           analysisActive={analysisActive}
           guidesActive={guidesActive}
           mainCanvasRef={canvasRef}
+          toneConfig={toneConfig}
+          terrainConfig={terrainConfig}
+          zoom={zoom}
+          onZoomChange={setZoom}
         />
       </div>
     </div>

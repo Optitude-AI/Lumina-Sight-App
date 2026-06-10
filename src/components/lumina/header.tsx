@@ -49,6 +49,8 @@ export interface HeaderProps {
   hasImage: boolean;
   onReset: () => void;
   onDownload: () => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
 }
 
 export default function Header({
@@ -73,6 +75,8 @@ export default function Header({
   hasImage,
   onReset,
   onDownload,
+  zoom,
+  onZoomChange,
 }: HeaderProps) {
   const { theme, setTheme } = useTheme();
 
@@ -116,11 +120,12 @@ export default function Header({
             <Button
               variant={terrain3D ? "default" : "ghost"}
               size="sm"
-              className={`size-8 ${terrain3D ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
+              className={`h-7 px-2 gap-1.5 ${terrain3D ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleTerrain}
               disabled={!hasImage}
             >
-              <Mountain className="size-4" />
+              <Mountain className="size-3.5" />
+              <span className="text-xs hidden sm:inline">3D Terrain</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">3D Terrain</TooltipContent>
@@ -134,10 +139,12 @@ export default function Header({
             <Button
               variant={analysisActive ? "default" : "ghost"}
               size="sm"
-              className={`size-8 ${analysisActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
+              className={`h-7 px-2 gap-1.5 ${analysisActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleAnalysis}
+              disabled={!hasImage}
             >
-              <Eye className="size-4" />
+              <Eye className="size-3.5" />
+              <span className="text-xs hidden sm:inline">Analysis</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">Analysis</TooltipContent>
@@ -148,10 +155,12 @@ export default function Header({
             <Button
               variant={guidesActive ? "default" : "ghost"}
               size="sm"
-              className={`size-8 ${guidesActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
+              className={`h-7 px-2 gap-1.5 ${guidesActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleGuides}
+              disabled={!hasImage}
             >
-              <Grid3X3 className="size-4" />
+              <Grid3X3 className="size-3.5" />
+              <span className="text-xs hidden sm:inline">Guides</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">Guides</TooltipContent>
@@ -164,7 +173,7 @@ export default function Header({
           <TooltipTrigger asChild>
             <Button
               variant={pipetteActive ? "default" : "ghost"}
-              size="sm"
+              size="icon"
               className={`size-8 ${pipetteActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onTogglePipette}
               disabled={!hasImage}
@@ -179,9 +188,10 @@ export default function Header({
           <TooltipTrigger asChild>
             <Button
               variant={focusActive ? "default" : "ghost"}
-              size="sm"
+              size="icon"
               className={`size-8 ${focusActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleFocus}
+              disabled={!hasImage}
             >
               <Focus className="size-4" />
             </Button>
@@ -193,9 +203,10 @@ export default function Header({
           <TooltipTrigger asChild>
             <Button
               variant={scanActive ? "default" : "ghost"}
-              size="sm"
+              size="icon"
               className={`size-8 ${scanActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleScan}
+              disabled={!hasImage}
             >
               <ScanSearch className="size-4" />
             </Button>
@@ -207,9 +218,10 @@ export default function Header({
           <TooltipTrigger asChild>
             <Button
               variant={paletteActive ? "default" : "ghost"}
-              size="sm"
+              size="icon"
               className={`size-8 ${paletteActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onTogglePalette}
+              disabled={!hasImage}
             >
               <Palette className="size-4" />
             </Button>
@@ -221,9 +233,10 @@ export default function Header({
           <TooltipTrigger asChild>
             <Button
               variant={compareActive ? "default" : "ghost"}
-              size="sm"
+              size="icon"
               className={`size-8 ${compareActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
               onClick={onToggleCompare}
+              disabled={!hasImage}
             >
               <ArrowLeftRight className="size-4" />
             </Button>
@@ -239,8 +252,33 @@ export default function Header({
           className="gap-1.5 text-green-500 border-green-500/30 bg-green-500/10 px-2 py-0.5"
         >
           <ShieldCheck className="size-3" />
-          <span className="text-xs font-medium">Local only</span>
+          <span className="text-xs font-medium hidden sm:inline">Local only</span>
         </Badge>
+
+        {/* Zoom indicator */}
+        {hasImage && (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-xs"
+              onClick={() => onZoomChange(Math.max(10, zoom - 10))}
+            >
+              −
+            </Button>
+            <span className="text-xs text-muted-foreground tabular-nums w-10 text-center">
+              {zoom}%
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-xs"
+              onClick={() => onZoomChange(Math.min(400, zoom + 10))}
+            >
+              +
+            </Button>
+          </div>
+        )}
 
         <Tooltip>
           <TooltipTrigger asChild>

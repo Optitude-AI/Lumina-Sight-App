@@ -3,10 +3,12 @@
 import { useCallback, useRef, useEffect, useState } from "react";
 import { Upload, ShieldCheck } from "lucide-react";
 import type { AnalysisMode } from "./image-analyzer";
-import { applyAnalysis, render3DTerrain } from "./image-analyzer";
+import { applyAnalysis } from "./image-analyzer";
 import type { GuideConfig } from "./guide-renderer";
 import { drawGuides } from "./guide-renderer";
 import { getColorAtPixel, type ColorInfo } from "./color-picker";
+import { render3DTerrain, type Terrain3DConfig } from "./terrain-3d";
+import { applyToneCurve, type ToneCurveConfig } from "./tone-editor";
 
 export interface CanvasAreaProps {
   image: HTMLImageElement | null;
@@ -16,7 +18,7 @@ export interface CanvasAreaProps {
   analysisMode: AnalysisMode;
   opacity: number;
   sensitivity: number;
-  guides: GuideConfig;
+  guideConfig: GuideConfig;
   pipetteActive: boolean;
   onPickColor: (color: ColorInfo | null) => void;
   compareMode: "original" | "analysis";
@@ -24,17 +26,21 @@ export interface CanvasAreaProps {
   analysisActive: boolean;
   guidesActive: boolean;
   mainCanvasRef: React.RefObject<HTMLCanvasElement | null>;
+  toneConfig: ToneCurveConfig;
+  terrainConfig: Terrain3DConfig;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
 }
 
 export default function CanvasArea({
   image,
   imageData,
   onImageLoad,
-  onImageReset,
+  onImageReset: _onImageReset,
   analysisMode,
   opacity,
   sensitivity,
-  guides,
+  guideConfig,
   pipetteActive,
   onPickColor,
   compareMode,
@@ -42,6 +48,10 @@ export default function CanvasArea({
   analysisActive,
   guidesActive,
   mainCanvasRef,
+  toneConfig,
+  terrainConfig,
+  zoom,
+  onZoomChange,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = mainCanvasRef;
@@ -49,6 +59,8 @@ export default function CanvasArea({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const originalDataRef = useRef<ImageData | null>(null);
+  const terrainRotationRef = useRef(0);
+  const animationFrameRef = useRef<number>(0);
 
   // Track container size via state
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -76,7 +88,7 @@ export default function CanvasArea({
         const maxW = containerSize.width - 32;
         const maxH = containerSize.height - 32;
         if (maxW <= 0 || maxH <= 0) return {};
-        const scale = Math.min(maxW / image.width, maxH / image.height, 1);
+        const scale = Math.min(maxW / image.width, maxH / image.height, 1) * (zoom / 100);
         return {
           width: `${image.width * scale}px`,
           height: `${image.height * scale}px`,
@@ -192,8 +204,63 @@ export default function CanvasArea({
     [pipetteActive, imageData, onPickColor, canvasRef]
   );
 
-  // Render canvas
+  // Mouse wheel for zoom
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (!image) return;
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -10 : 10;
+      onZoomChange(Math.max(10, Math.min(400, zoom + delta)));
+    },
+    [image, zoom, onZoomChange]
+  );
+
+  // 3D terrain animation loop
   useEffect(() => {
+    if (!terrain3D || !image || !originalDataRef.current) {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      return;
+    }
+
+    const animate = () => {
+      if (terrainConfig.autoRotate) {
+        terrainRotationRef.current += 0.005;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      render3DTerrain(
+        ctx,
+        originalDataRef.current!,
+        image.width,
+        image.height,
+        canvas.width,
+        canvas.height,
+        terrainConfig,
+        terrainRotationRef.current
+      );
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [terrain3D, image, terrainConfig, canvasRef]);
+
+  // Render canvas (non-terrain mode)
+  useEffect(() => {
+    if (terrain3D && image && originalDataRef.current) return; // handled by animation loop
+
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
     if (!canvas || !overlay) return;
@@ -208,24 +275,6 @@ export default function CanvasArea({
       return;
     }
 
-    // 3D Terrain mode
-    if (terrain3D && originalDataRef.current) {
-      canvas.width = containerSize.width || image.width;
-      canvas.height = containerSize.height || image.height;
-      overlay.width = canvas.width;
-      overlay.height = canvas.height;
-      render3DTerrain(
-        ctx,
-        originalDataRef.current,
-        image.width,
-        image.height,
-        canvas.width,
-        canvas.height
-      );
-      octx.clearRect(0, 0, overlay.width, overlay.height);
-      return;
-    }
-
     // Size canvases to image
     canvas.width = image.width;
     canvas.height = image.height;
@@ -234,11 +283,39 @@ export default function CanvasArea({
 
     // Draw base image or analysis
     if (compareMode === "original" || !analysisActive) {
-      ctx.drawImage(image, 0, 0);
+      // Apply tone curve to the original image
+      if (toneConfig && originalDataRef.current) {
+        const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
+          toneConfig.brightness === 0 &&
+          toneConfig.contrast === 0 &&
+          toneConfig.shadows === 0 &&
+          toneConfig.highlights === 0;
+        
+        if (isDefaultCurve) {
+          ctx.drawImage(image, 0, 0);
+        } else {
+          const toned = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
+          ctx.putImageData(toned, 0, 0);
+        }
+      } else {
+        ctx.drawImage(image, 0, 0);
+      }
     } else {
-      // Apply analysis
+      // Apply analysis (on toned data if tone curve is active)
+      let sourceData = originalDataRef.current || imageData;
+      if (toneConfig && originalDataRef.current) {
+        const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
+          toneConfig.brightness === 0 &&
+          toneConfig.contrast === 0 &&
+          toneConfig.shadows === 0 &&
+          toneConfig.highlights === 0;
+        
+        if (!isDefaultCurve) {
+          sourceData = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
+        }
+      }
       const analyzed = applyAnalysis(
-        originalDataRef.current || imageData,
+        sourceData,
         analysisMode,
         opacity / 100,
         sensitivity
@@ -248,8 +325,8 @@ export default function CanvasArea({
 
     // Draw guides on overlay
     octx.clearRect(0, 0, overlay.width, overlay.height);
-    if (guidesActive) {
-      drawGuides(octx, image.width, image.height, guides);
+    if (guidesActive && guideConfig.activeGuide) {
+      drawGuides(octx, image.width, image.height, guideConfig, originalDataRef.current);
     }
   }, [
     image,
@@ -257,13 +334,65 @@ export default function CanvasArea({
     analysisMode,
     opacity,
     sensitivity,
-    guides,
+    guideConfig,
     compareMode,
     terrain3D,
     analysisActive,
     guidesActive,
     containerSize,
+    toneConfig,
+    canvasRef,
   ]);
+
+  // Render 3D terrain (non-animated, for when autoRotate is off)
+  useEffect(() => {
+    if (!terrain3D || !image || !originalDataRef.current) return;
+    if (terrainConfig.autoRotate) return; // handled by animation loop
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = containerSize.width || image.width;
+    canvas.height = containerSize.height || image.height;
+
+    const overlay = overlayRef.current;
+    if (overlay) {
+      overlay.width = canvas.width;
+      overlay.height = canvas.height;
+      const octx = overlay.getContext("2d");
+      if (octx) octx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+
+    render3DTerrain(
+      ctx,
+      originalDataRef.current,
+      image.width,
+      image.height,
+      canvas.width,
+      canvas.height,
+      terrainConfig,
+      terrainRotationRef.current
+    );
+  }, [terrain3D, image, terrainConfig, containerSize, canvasRef]);
+
+  // Resize canvas for terrain mode
+  useEffect(() => {
+    if (!terrain3D || !image) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = containerSize.width || image.width;
+    canvas.height = containerSize.height || image.height;
+
+    const overlay = overlayRef.current;
+    if (overlay) {
+      overlay.width = canvas.width;
+      overlay.height = canvas.height;
+    }
+  }, [terrain3D, image, containerSize, canvasRef]);
 
   return (
     <div
@@ -275,6 +404,7 @@ export default function CanvasArea({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onClick={handleClick}
+      onWheel={handleWheel}
     >
       <input
         ref={fileInputRef}
@@ -301,13 +431,22 @@ export default function CanvasArea({
               Drop an image here or click to browse
             </p>
             <p className="text-xs text-muted-foreground">
-              All processing happens locally in your browser
+              Supports JPG, PNG, WebP, GIF, BMP
             </p>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-green-500">
             <ShieldCheck className="size-3" />
-            <span>No data leaves your device</span>
+            <span>All processing is local</span>
           </div>
+        </div>
+      ) : terrain3D ? (
+        // 3D terrain canvas - full area
+        <div className="absolute inset-0">
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 w-full h-full"
+            style={{ imageRendering: "auto" }}
+          />
         </div>
       ) : (
         // Canvas area
