@@ -9,8 +9,6 @@ function isAuthenticated(req: NextRequest): boolean {
   const cookie = req.cookies.get(COOKIE_NAME)?.value;
   if (!cookie) return false;
 
-  // Simple hash check — the cookie stores a hash of the password
-  // Using a basic approach since this is a shared password, not per-user auth
   try {
     const expected = hashPassword(PASSWORD);
     return cookie === expected;
@@ -20,18 +18,14 @@ function isAuthenticated(req: NextRequest): boolean {
 }
 
 function hashPassword(pwd: string): string {
-  // Simple deterministic hash for cookie comparison
-  // For production, use bcrypt — but middleware runs on Edge where bcrypt isn't available
   const encoder = new TextEncoder();
   const data = encoder.encode(pwd + "-lumina-sight-salt");
-  // Use a simple but sufficient approach for Edge runtime
   let hash = 0;
   for (let i = 0; i < data.length; i++) {
     const char = data[i];
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
-  // Add a second pass for more uniqueness
   let hash2 = 0;
   for (let i = data.length - 1; i >= 0; i--) {
     const char = data[i];
@@ -42,7 +36,17 @@ function hashPassword(pwd: string): string {
 }
 
 export function middleware(req: NextRequest) {
-  const { pathname, searchParams } = req.nextUrl;
+  const { pathname } = req.nextUrl;
+
+  // Force HTTPS — redirect any HTTP request to HTTPS
+  if (
+    req.headers.get("x-forwarded-proto") === "http" ||
+    req.nextUrl.protocol === "http:"
+  ) {
+    const httpsUrl = req.nextUrl.clone();
+    httpsUrl.protocol = "https:";
+    return NextResponse.redirect(httpsUrl, 301);
+  }
 
   // Allow access to the login page itself
   if (pathname === LOGIN_PATH) {
@@ -68,9 +72,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Redirect to login page
-  const loginUrl = req.nextUrl.clone();
-  loginUrl.pathname = LOGIN_PATH;
+  // Redirect to login page (ensure HTTPS)
+  const loginUrl = new URL(LOGIN_PATH, `https://${req.headers.get("host") || req.nextUrl.host}`);
   return NextResponse.redirect(loginUrl);
 }
 
