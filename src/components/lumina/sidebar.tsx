@@ -10,6 +10,8 @@ import {
   ChevronDown,
   ChevronRight,
   SlidersHorizontal,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -23,7 +25,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import Histogram from "./histogram";
-import { drawColorWheel, drawColorWheelIndicator, extractPalette, getColorAtPixel, type ColorInfo } from "./color-picker";
+import { drawColorWheel, drawColorWheelIndicator, extractPalette, type ColorInfo } from "./color-picker";
 import { drawToneCurve, TONE_PRESETS, handleCurveDrag, type ToneCurveConfig, DEFAULT_TONE_CONFIG } from "./tone-editor";
 import type { Terrain3DConfig } from "./terrain-3d";
 import type { AnalysisMode } from "./image-analyzer";
@@ -59,6 +61,12 @@ export interface SidebarProps {
   onTerrainConfigChange: (config: Terrain3DConfig) => void;
   // State flags
   hasImage: boolean;
+  // AI Analysis
+  aiAnalysis: string;
+  aiAnalysisLoading: boolean;
+  aiAnalysisType: string;
+  onAIAnalysisTypeChange: (type: string) => void;
+  onAIAnalyze: () => void;
 }
 
 const ANALYSIS_MODES: { mode: AnalysisMode; label: string; icon: string }[] = [
@@ -88,6 +96,13 @@ const GUIDE_PRESET_COLORS = [
   { label: "Green", color: "#00ff00" },
   { label: "Orange", color: "#f97316" },
   { label: "Red", color: "#ff0000" },
+];
+
+const AI_ANALYSIS_TYPES = [
+  { key: "composition", label: "Composition" },
+  { key: "color", label: "Color" },
+  { key: "exposure", label: "Exposure" },
+  { key: "full", label: "Full" },
 ];
 
 /** Simple RGB to HSL conversion for color wheel picker */
@@ -162,6 +177,11 @@ export default function Sidebar({
   terrainConfig,
   onTerrainConfigChange,
   hasImage,
+  aiAnalysis,
+  aiAnalysisLoading,
+  aiAnalysisType,
+  onAIAnalysisTypeChange,
+  onAIAnalyze,
 }: SidebarProps) {
   const [analysisOpen, setAnalysisOpen] = useState(true);
   const [histogramOpen, setHistogramOpen] = useState(true);
@@ -169,6 +189,7 @@ export default function Sidebar({
   const [toneOpen, setToneOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(true);
   const [terrainOpen, setTerrainOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(false);
 
   const colorWheelRef = useRef<HTMLCanvasElement>(null);
   const colorWheelBufferRef = useRef<HTMLCanvasElement | null>(null); // Offscreen buffer
@@ -749,7 +770,79 @@ export default function Sidebar({
 
       <Separator />
 
-      {/* 6. 3D Terrain Section */}
+      {/* 6. AI Analysis Section */}
+      <Collapsible open={aiOpen} onOpenChange={setAiOpen}>
+        <div className="px-2 pt-2">
+          <SectionHeader
+            icon={Sparkles}
+            label="AI Analysis"
+            open={aiOpen}
+            onToggle={() => setAiOpen(!aiOpen)}
+            color="text-orange-500"
+          />
+        </div>
+        <CollapsibleContent>
+          <div className="px-3 pb-3 space-y-3">
+            {/* Analysis type buttons */}
+            <div className="grid grid-cols-2 gap-1.5">
+              {AI_ANALYSIS_TYPES.map(({ key, label }) => (
+                <Button
+                  key={key}
+                  variant={aiAnalysisType === key ? "default" : "outline"}
+                  size="sm"
+                  className={`h-7 text-xs ${
+                    aiAnalysisType === key
+                      ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
+                      : ""
+                  }`}
+                  onClick={() => onAIAnalysisTypeChange(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+
+            {/* Analyze button */}
+            <Button
+              className="w-full bg-orange-500 hover:bg-orange-600 text-white"
+              size="sm"
+              onClick={onAIAnalyze}
+              disabled={!hasImage || aiAnalysisLoading}
+            >
+              {aiAnalysisLoading ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin mr-1.5" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-3.5 mr-1.5" />
+                  Analyze
+                </>
+              )}
+            </Button>
+
+            {/* AI analysis result */}
+            {aiAnalysis && (
+              <div className="mt-2 p-3 rounded-md bg-black/30 border border-border/50">
+                <div className="text-xs whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-64 overflow-y-auto">
+                  {aiAnalysis}
+                </div>
+              </div>
+            )}
+
+            {!hasImage && (
+              <p className="text-xs text-muted-foreground text-center">
+                Load an image to use AI analysis
+              </p>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
+      <Separator />
+
+      {/* 7. 3D Terrain Section */}
       <Collapsible open={terrainOpen} onOpenChange={setTerrainOpen}>
         <div className="px-2 pt-2">
           <SectionHeader

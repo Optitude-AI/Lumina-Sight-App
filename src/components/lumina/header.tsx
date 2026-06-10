@@ -17,6 +17,11 @@ import {
   Download,
   Sun,
   Moon,
+  Undo2,
+  Redo2,
+  Crop,
+  RotateCw,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -51,6 +56,19 @@ export interface HeaderProps {
   onDownload: () => void;
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  // Undo/Redo
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  // Crop & Rotate
+  cropActive: boolean;
+  onToggleCrop: () => void;
+  onRotate90: () => void;
+  // AI Analysis
+  onAIAnalyze: () => void;
+  // Export
+  onExport: () => void;
 }
 
 export default function Header({
@@ -77,6 +95,15 @@ export default function Header({
   onDownload,
   zoom,
   onZoomChange,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  cropActive,
+  onToggleCrop,
+  onRotate90,
+  onAIAnalyze,
+  onExport,
 }: HeaderProps) {
   const { theme, setTheme } = useTheme();
 
@@ -243,6 +270,88 @@ export default function Header({
           </TooltipTrigger>
           <TooltipContent side="bottom">Compare</TooltipContent>
         </Tooltip>
+
+        <Separator orientation="vertical" className="h-6 mx-1" />
+
+        {/* Undo / Redo */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={onUndo}
+              disabled={!canUndo || !hasImage}
+            >
+              <Undo2 className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Undo (Ctrl+Z)</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={onRedo}
+              disabled={!canRedo || !hasImage}
+            >
+              <Redo2 className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Redo (Ctrl+Shift+Z)</TooltipContent>
+        </Tooltip>
+
+        <Separator orientation="vertical" className="h-6 mx-1" />
+
+        {/* Crop & Rotate */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={cropActive ? "default" : "ghost"}
+              size="icon"
+              className={`size-8 ${cropActive ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`}
+              onClick={onToggleCrop}
+              disabled={!hasImage}
+            >
+              <Crop className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Crop</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={onRotate90}
+              disabled={!hasImage}
+            >
+              <RotateCw className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Rotate 90°</TooltipContent>
+        </Tooltip>
+
+        {/* AI Analysis */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={onAIAnalyze}
+              disabled={!hasImage}
+            >
+              <Sparkles className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">AI Analysis</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Right side */}
@@ -301,13 +410,13 @@ export default function Header({
               variant="ghost"
               size="icon"
               className="size-8"
-              onClick={onDownload}
+              onClick={onExport}
               disabled={!hasImage}
             >
               <Download className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Download</TooltipContent>
+          <TooltipContent side="bottom">Export</TooltipContent>
         </Tooltip>
 
         <Tooltip>

@@ -10,6 +10,7 @@ import { drawGuides } from "./guide-renderer";
 import { getColorAtPixel, type ColorInfo } from "./color-picker";
 import type { Terrain3DConfig } from "./terrain-3d";
 import { applyToneCurve, type ToneCurveConfig } from "./tone-editor";
+import CropTool, { type CropRegion } from "./crop-tool";
 
 // Dynamic import for R3F terrain — no SSR
 const Terrain3DView = dynamic(() => import("./terrain-3d"), { ssr: false });
@@ -34,6 +35,12 @@ export interface CanvasAreaProps {
   terrainConfig: Terrain3DConfig;
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  // Crop
+  cropActive: boolean;
+  onCropApply: (region: CropRegion) => void;
+  onCropCancel: () => void;
+  // Export - expose overlay ref
+  overlayCanvasRef: React.RefObject<HTMLCanvasElement | null>;
 }
 
 export default function CanvasArea({
@@ -56,10 +63,14 @@ export default function CanvasArea({
   terrainConfig,
   zoom,
   onZoomChange,
+  cropActive,
+  onCropApply,
+  onCropCancel,
+  overlayCanvasRef,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = mainCanvasRef;
-  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = overlayCanvasRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const originalDataRef = useRef<ImageData | null>(null);
@@ -170,6 +181,7 @@ export default function CanvasArea({
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
       if (!pipetteActive || !imageData) return;
+      if (cropActive) return;
 
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -183,13 +195,14 @@ export default function CanvasArea({
       const color = getColorAtPixel(imageData, x, y);
       onPickColor(color);
     },
-    [pipetteActive, imageData, onPickColor, canvasRef]
+    [pipetteActive, imageData, onPickColor, canvasRef, cropActive]
   );
 
   // Mouse move for live color preview
   const handleCanvasMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (!pipetteActive || !imageData) return;
+      if (cropActive) return;
 
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -203,7 +216,7 @@ export default function CanvasArea({
       const color = getColorAtPixel(imageData, x, y);
       onPickColor(color);
     },
-    [pipetteActive, imageData, onPickColor, canvasRef]
+    [pipetteActive, imageData, onPickColor, canvasRef, cropActive]
   );
 
   // Mouse wheel for zoom
@@ -260,7 +273,7 @@ export default function CanvasArea({
             toneConfig.contrast === 0 &&
             toneConfig.shadows === 0 &&
             toneConfig.highlights === 0;
-          
+
           if (!isDefaultCurve) {
             sourceData = applyToneCurve(originalDataRef.current, toneConfig.curvePoints);
           }
@@ -280,7 +293,7 @@ export default function CanvasArea({
             toneConfig.contrast === 0 &&
             toneConfig.shadows === 0 &&
             toneConfig.highlights === 0;
-          
+
           if (isDefaultCurve) {
             ctx.drawImage(image, 0, 0);
           } else {
@@ -317,18 +330,40 @@ export default function CanvasArea({
     containerSize,
     toneConfig,
     canvasRef,
+    overlayRef,
   ]);
+
+  // Compute display dimensions for crop tool
+  const displayWidth = image
+    ? (() => {
+        const maxW = containerSize.width - 32;
+        const maxH = containerSize.height - 32;
+        if (maxW <= 0 || maxH <= 0) return 0;
+        const scale = Math.min(maxW / image.width, maxH / image.height, 1) * (zoom / 100);
+        return image.width * scale;
+      })()
+    : 0;
+
+  const displayHeight = image
+    ? (() => {
+        const maxW = containerSize.width - 32;
+        const maxH = containerSize.height - 32;
+        if (maxW <= 0 || maxH <= 0) return 0;
+        const scale = Math.min(maxW / image.width, maxH / image.height, 1) * (zoom / 100);
+        return image.height * scale;
+      })()
+    : 0;
 
   return (
     <div
       ref={containerRef}
       className={`flex-1 flex items-center justify-center relative overflow-hidden ${
         isDragOver ? "bg-orange-500/5" : ""
-      } ${pipetteActive && !terrain3D ? "cursor-crosshair" : ""}`}
+      } ${pipetteActive && !terrain3D && !cropActive ? "cursor-crosshair" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={!terrain3D ? handleClick : undefined}
+      onClick={!terrain3D && !cropActive ? handleClick : undefined}
       onWheel={!terrain3D ? handleWheel : undefined}
     >
       <input
@@ -388,11 +423,24 @@ export default function CanvasArea({
             style={{ imageRendering: "auto" }}
           />
           {/* Interactive overlay for pipette tool */}
-          <div
-            className="absolute inset-0"
-            style={{ cursor: pipetteActive ? "crosshair" : "default" }}
-            onClick={handleCanvasClick}
-            onMouseMove={handleCanvasMouseMove}
+          {!cropActive && (
+            <div
+              className="absolute inset-0"
+              style={{ cursor: pipetteActive ? "crosshair" : "default" }}
+              onClick={handleCanvasClick}
+              onMouseMove={handleCanvasMouseMove}
+            />
+          )}
+
+          {/* Crop tool overlay */}
+          <CropTool
+            imageWidth={image.width}
+            imageHeight={image.height}
+            displayWidth={displayWidth}
+            displayHeight={displayHeight}
+            onCropApply={onCropApply}
+            onCropCancel={onCropCancel}
+            isActive={cropActive}
           />
         </div>
       )}

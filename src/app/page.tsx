@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import Header from "@/components/lumina/header";
 import Sidebar from "@/components/lumina/sidebar";
 import CanvasArea from "@/components/lumina/canvas-area";
+import ExportDialog from "@/components/lumina/export-dialog";
 import type { AnalysisMode } from "@/components/lumina/image-analyzer";
 import type { GuideConfig } from "@/components/lumina/guide-renderer";
 import type { ColorInfo } from "@/components/lumina/color-picker";
 import { type Terrain3DConfig, DEFAULT_TERRAIN_CONFIG } from "@/components/lumina/terrain-3d";
 import { type ToneCurveConfig, DEFAULT_TONE_CONFIG, generateCurveFromSliders } from "@/components/lumina/tone-editor";
+import { useHistory, type HistorySnapshot } from "@/components/lumina/use-history";
+import type { CropRegion } from "@/components/lumina/crop-tool";
 
 const initialTerrainConfig: Terrain3DConfig = {
   elevationScale: 3,
@@ -30,6 +33,7 @@ export default function Home() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageData, setImageData] = useState<ImageData | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -75,6 +79,79 @@ export default function Home() {
   // Zoom state
   const [zoom, setZoom] = useState(100);
 
+  // Crop state
+  const [cropActive, setCropActive] = useState(false);
+
+  // AI Analysis state
+  const [aiAnalysis, setAiAnalysis] = useState("");
+  const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
+  const [aiAnalysisType, setAiAnalysisType] = useState("full");
+
+  // Export dialog state
+  const [exportOpen, setExportOpen] = useState(false);
+
+  // Undo/Redo history
+  const history = useHistory();
+
+  // Get current history snapshot
+  const getCurrentSnapshot = useCallback((): HistorySnapshot => {
+    return {
+      toneConfig,
+      guideConfig,
+      analysisMode,
+      opacity,
+      sensitivity,
+      compareMode,
+      analysisActive,
+      guidesActive,
+    };
+  }, [toneConfig, guideConfig, analysisMode, opacity, sensitivity, compareMode, analysisActive, guidesActive]);
+
+  // Apply a history snapshot
+  const applySnapshot = useCallback((snapshot: HistorySnapshot) => {
+    setToneConfig(snapshot.toneConfig);
+    setGuideConfig(snapshot.guideConfig);
+    setAnalysisMode(snapshot.analysisMode);
+    setOpacity(snapshot.opacity);
+    setSensitivity(snapshot.sensitivity);
+    setCompareMode(snapshot.compareMode);
+    setAnalysisActive(snapshot.analysisActive);
+    setGuidesActive(snapshot.guidesActive);
+  }, []);
+
+  // Handle undo
+  const handleUndo = useCallback(() => {
+    const snapshot = history.undo(getCurrentSnapshot());
+    if (snapshot) applySnapshot(snapshot);
+  }, [history, getCurrentSnapshot, applySnapshot]);
+
+  // Handle redo
+  const handleRedo = useCallback(() => {
+    const snapshot = history.redo(getCurrentSnapshot());
+    if (snapshot) applySnapshot(snapshot);
+  }, [history, getCurrentSnapshot, applySnapshot]);
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // Push history before state changes
+  const pushHistory = useCallback(() => {
+    history.push(getCurrentSnapshot());
+  }, [history, getCurrentSnapshot]);
+
   // Handle image load
   const handleImageLoad = useCallback((img: HTMLImageElement, data: ImageData) => {
     setImage(img);
@@ -100,25 +177,27 @@ export default function Home() {
     setTerrainConfig(initialTerrainConfig);
     setPalette([]);
     setCompareMode("analysis");
-  }, []);
+    setCropActive(false);
+    setAiAnalysis("");
+    setAiAnalysisType("full");
+    history.reset();
+  }, [history]);
 
-  // Handle download
+  // Handle download (opens export dialog)
   const handleDownload = useCallback(() => {
-    if (!canvasRef.current) return;
-    const link = document.createElement("a");
-    link.download = "lumina-sight-analysis.png";
-    link.href = canvasRef.current.toDataURL("image/png");
-    link.click();
+    setExportOpen(true);
   }, []);
 
-  // Toggle handlers
+  // Toggle handlers with history
   const handleToggleAnalysis = useCallback(() => {
+    pushHistory();
     setAnalysisActive((prev) => !prev);
-  }, []);
+  }, [pushHistory]);
 
   const handleToggleGuides = useCallback(() => {
+    pushHistory();
     setGuidesActive((prev) => !prev);
-  }, []);
+  }, [pushHistory]);
 
   const handleTogglePipette = useCallback(() => {
     setPipetteActive((prev) => !prev);
@@ -153,9 +232,10 @@ export default function Home() {
   }, [paletteActive]);
 
   const handleToggleCompare = useCallback(() => {
+    pushHistory();
     setCompareActive((prev) => !prev);
     setCompareMode((prev) => prev === "original" ? "analysis" : "original");
-  }, []);
+  }, [pushHistory]);
 
   const handleToggleTerrain = useCallback(() => {
     setTerrain3D((prev) => !prev);
@@ -163,6 +243,7 @@ export default function Home() {
 
   // Handle tone config changes from sidebar SLIDERS — regenerate curve from slider values
   const handleToneSliderChange = useCallback((newConfig: ToneCurveConfig) => {
+    pushHistory();
     const newCurve = generateCurveFromSliders(
       newConfig.brightness,
       newConfig.contrast,
@@ -170,12 +251,159 @@ export default function Home() {
       newConfig.highlights
     );
     setToneConfig({ ...newConfig, curvePoints: newCurve });
-  }, []);
+  }, [pushHistory]);
 
   // Handle tone config changes from PRESETS or CURVE DRAG — preserve the curve points as-is
   const handleToneCurveChange = useCallback((newConfig: ToneCurveConfig) => {
+    pushHistory();
     setToneConfig(newConfig);
+  }, [pushHistory]);
+
+  // Analysis mode change with history
+  const handleAnalysisModeChange = useCallback((mode: AnalysisMode) => {
+    pushHistory();
+    setAnalysisMode(mode);
+  }, [pushHistory]);
+
+  // Opacity change with history (debounced via slider)
+  const handleOpacityChange = useCallback((value: number) => {
+    pushHistory();
+    setOpacity(value);
+  }, [pushHistory]);
+
+  // Sensitivity change with history
+  const handleSensitivityChange = useCallback((value: number) => {
+    pushHistory();
+    setSensitivity(value);
+  }, [pushHistory]);
+
+  // Guide config change with history
+  const handleGuideConfigChange = useCallback((config: GuideConfig) => {
+    pushHistory();
+    setGuideConfig(config);
+  }, [pushHistory]);
+
+  // Crop handlers
+  const handleToggleCrop = useCallback(() => {
+    setCropActive((prev) => !prev);
   }, []);
+
+  const handleCropCancel = useCallback(() => {
+    setCropActive(false);
+  }, []);
+
+  const handleCropApply = useCallback((region: CropRegion) => {
+    if (!image || !imageData) return;
+
+    // Create a new canvas with the cropped region
+    const cropCanvas = document.createElement("canvas");
+    cropCanvas.width = region.width;
+    cropCanvas.height = region.height;
+    const cropCtx = cropCanvas.getContext("2d");
+    if (!cropCtx) return;
+
+    // If rotation is applied, we need to handle it
+    if (region.rotation !== 0) {
+      cropCtx.save();
+      cropCtx.translate(region.width / 2, region.height / 2);
+      cropCtx.rotate((region.rotation * Math.PI) / 180);
+      cropCtx.drawImage(image, -region.width / 2, -region.height / 2, region.width, region.height);
+      cropCtx.restore();
+    } else {
+      cropCtx.drawImage(image, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
+    }
+
+    // Create new image from cropped canvas
+    const newImg = new Image();
+    newImg.onload = () => {
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = newImg.width;
+      tempCanvas.height = newImg.height;
+      const tempCtx = tempCanvas.getContext("2d");
+      if (!tempCtx) return;
+      tempCtx.drawImage(newImg, 0, 0);
+      const newData = tempCtx.getImageData(0, 0, newImg.width, newImg.height);
+      setImage(newImg);
+      setImageData(newData);
+    };
+    newImg.src = cropCanvas.toDataURL("image/png");
+
+    setCropActive(false);
+  }, [image, imageData]);
+
+  // Rotate 90° handler
+  const handleRotate90 = useCallback(() => {
+    if (!image || !imageData) return;
+
+    const rotCanvas = document.createElement("canvas");
+    rotCanvas.width = image.height;
+    rotCanvas.height = image.width;
+    const rotCtx = rotCanvas.getContext("2d");
+    if (!rotCtx) return;
+
+    rotCtx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+    rotCtx.rotate(Math.PI / 2);
+    rotCtx.drawImage(image, -image.width / 2, -image.height / 2);
+
+    const newImg = new Image();
+    newImg.onload = () => {
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = newImg.width;
+      tempCanvas.height = newImg.height;
+      const tempCtx = tempCanvas.getContext("2d");
+      if (!tempCtx) return;
+      tempCtx.drawImage(newImg, 0, 0);
+      const newData = tempCtx.getImageData(0, 0, newImg.width, newImg.height);
+      setImage(newImg);
+      setImageData(newData);
+    };
+    newImg.src = rotCanvas.toDataURL("image/png");
+  }, [image, imageData]);
+
+  // AI Analysis handler
+  const handleAIAnalyze = useCallback(async () => {
+    if (!image || !imageData) return;
+
+    setAiAnalysisLoading(true);
+    setAiAnalysis("");
+
+    try {
+      // Convert image to base64
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = image.width;
+      tempCanvas.height = image.height;
+      const tempCtx = tempCanvas.getContext("2d");
+      if (!tempCtx) return;
+      tempCtx.drawImage(image, 0, 0);
+      const dataUrl = tempCanvas.toDataURL("image/jpeg", 0.8);
+      const base64 = dataUrl.split(",")[1];
+
+      const response = await fetch("/api/ai-analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: base64,
+          analysisType: aiAnalysisType,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) {
+        setAiAnalysis(`Error: ${data.error}`);
+      } else {
+        setAiAnalysis(data.analysis || "No analysis returned.");
+      }
+    } catch (err) {
+      setAiAnalysis("Failed to connect to AI service. Please try again.");
+    } finally {
+      setAiAnalysisLoading(false);
+    }
+  }, [image, imageData, aiAnalysisType]);
+
+  // AI analysis from header — scroll sidebar to AI section
+  const handleAIAnalyzeFromHeader = useCallback(() => {
+    handleAIAnalyze();
+  }, [handleAIAnalyze]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
@@ -203,22 +431,31 @@ export default function Home() {
         onDownload={handleDownload}
         zoom={zoom}
         onZoomChange={setZoom}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        cropActive={cropActive}
+        onToggleCrop={handleToggleCrop}
+        onRotate90={handleRotate90}
+        onAIAnalyze={handleAIAnalyzeFromHeader}
+        onExport={() => setExportOpen(true)}
       />
 
       <div className="flex flex-1 min-h-0">
         <Sidebar
           open={sidebarOpen}
           analysisMode={analysisMode}
-          onAnalysisModeChange={setAnalysisMode}
+          onAnalysisModeChange={handleAnalysisModeChange}
           opacity={opacity}
-          onOpacityChange={setOpacity}
+          onOpacityChange={handleOpacityChange}
           sensitivity={sensitivity}
-          onSensitivityChange={setSensitivity}
+          onSensitivityChange={handleSensitivityChange}
           imageData={imageData}
           rgbChannels={rgbChannels}
           onRgbChannelsChange={setRgbChannels}
           guideConfig={guideConfig}
-          onGuideConfigChange={setGuideConfig}
+          onGuideConfigChange={handleGuideConfigChange}
           toneConfig={toneConfig}
           onToneSliderChange={handleToneSliderChange}
           onToneCurveChange={handleToneCurveChange}
@@ -229,6 +466,11 @@ export default function Home() {
           terrainConfig={terrainConfig}
           onTerrainConfigChange={setTerrainConfig}
           hasImage={!!image}
+          aiAnalysis={aiAnalysis}
+          aiAnalysisLoading={aiAnalysisLoading}
+          aiAnalysisType={aiAnalysisType}
+          onAIAnalysisTypeChange={setAiAnalysisType}
+          onAIAnalyze={handleAIAnalyze}
         />
 
         <CanvasArea
@@ -251,8 +493,31 @@ export default function Home() {
           terrainConfig={terrainConfig}
           zoom={zoom}
           onZoomChange={setZoom}
+          cropActive={cropActive}
+          onCropApply={handleCropApply}
+          onCropCancel={handleCropCancel}
+          overlayCanvasRef={overlayCanvasRef}
         />
       </div>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        mainCanvasRef={canvasRef}
+        overlayCanvasRef={overlayCanvasRef}
+        image={image}
+        imageData={imageData}
+        toneConfig={toneConfig}
+        guideConfig={guideConfig}
+        analysisMode={analysisMode}
+        opacity={opacity}
+        sensitivity={sensitivity}
+        analysisActive={analysisActive}
+        guidesActive={guidesActive}
+        compareMode={compareMode}
+        palette={palette}
+      />
     </div>
   );
 }
