@@ -1,14 +1,18 @@
 "use client";
 
 import { useCallback, useRef, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { Upload, ShieldCheck } from "lucide-react";
 import type { AnalysisMode } from "./image-analyzer";
 import { applyAnalysis } from "./image-analyzer";
 import type { GuideConfig } from "./guide-renderer";
 import { drawGuides } from "./guide-renderer";
 import { getColorAtPixel, type ColorInfo } from "./color-picker";
-import { render3DTerrain, type Terrain3DConfig } from "./terrain-3d";
+import type { Terrain3DConfig } from "./terrain-3d";
 import { applyToneCurve, type ToneCurveConfig } from "./tone-editor";
+
+// Dynamic import for R3F terrain — no SSR
+const Terrain3DView = dynamic(() => import("./terrain-3d"), { ssr: false });
 
 export interface CanvasAreaProps {
   image: HTMLImageElement | null;
@@ -59,8 +63,6 @@ export default function CanvasArea({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const originalDataRef = useRef<ImageData | null>(null);
-  const terrainRotationRef = useRef(0);
-  const animationFrameRef = useRef<number>(0);
 
   // Track container size via state
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -215,51 +217,9 @@ export default function CanvasArea({
     [image, zoom, onZoomChange]
   );
 
-  // 3D terrain animation loop
+  // Render 2D canvas (non-terrain mode)
   useEffect(() => {
-    if (!terrain3D || !image || !originalDataRef.current) {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      return;
-    }
-
-    const animate = () => {
-      if (terrainConfig.autoRotate) {
-        terrainRotationRef.current += 0.005;
-      }
-
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      render3DTerrain(
-        ctx,
-        originalDataRef.current!,
-        image.width,
-        image.height,
-        canvas.width,
-        canvas.height,
-        terrainConfig,
-        terrainRotationRef.current
-      );
-
-      animationFrameRef.current = requestAnimationFrame(animate);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [terrain3D, image, terrainConfig, canvasRef]);
-
-  // Render canvas (non-terrain mode)
-  useEffect(() => {
-    if (terrain3D && image && originalDataRef.current) return; // handled by animation loop
+    if (terrain3D && image) return; // 3D terrain handled by R3F
 
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
@@ -283,7 +243,6 @@ export default function CanvasArea({
 
     // Draw base image or analysis
     if (compareMode === "original" || !analysisActive) {
-      // Apply tone curve to the original image
       if (toneConfig && originalDataRef.current) {
         const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
           toneConfig.brightness === 0 &&
@@ -301,7 +260,6 @@ export default function CanvasArea({
         ctx.drawImage(image, 0, 0);
       }
     } else {
-      // Apply analysis (on toned data if tone curve is active)
       let sourceData = originalDataRef.current || imageData;
       if (toneConfig && originalDataRef.current) {
         const isDefaultCurve = toneConfig.curvePoints.every((v, i) => v === i) &&
@@ -344,67 +302,17 @@ export default function CanvasArea({
     canvasRef,
   ]);
 
-  // Render 3D terrain (non-animated, for when autoRotate is off)
-  useEffect(() => {
-    if (!terrain3D || !image || !originalDataRef.current) return;
-    if (terrainConfig.autoRotate) return; // handled by animation loop
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    canvas.width = containerSize.width || image.width;
-    canvas.height = containerSize.height || image.height;
-
-    const overlay = overlayRef.current;
-    if (overlay) {
-      overlay.width = canvas.width;
-      overlay.height = canvas.height;
-      const octx = overlay.getContext("2d");
-      if (octx) octx.clearRect(0, 0, overlay.width, overlay.height);
-    }
-
-    render3DTerrain(
-      ctx,
-      originalDataRef.current,
-      image.width,
-      image.height,
-      canvas.width,
-      canvas.height,
-      terrainConfig,
-      terrainRotationRef.current
-    );
-  }, [terrain3D, image, terrainConfig, containerSize, canvasRef]);
-
-  // Resize canvas for terrain mode
-  useEffect(() => {
-    if (!terrain3D || !image) return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    canvas.width = containerSize.width || image.width;
-    canvas.height = containerSize.height || image.height;
-
-    const overlay = overlayRef.current;
-    if (overlay) {
-      overlay.width = canvas.width;
-      overlay.height = canvas.height;
-    }
-  }, [terrain3D, image, containerSize, canvasRef]);
-
   return (
     <div
       ref={containerRef}
       className={`flex-1 flex items-center justify-center relative overflow-hidden ${
         isDragOver ? "bg-orange-500/5" : ""
-      } ${pipetteActive ? "cursor-crosshair" : ""}`}
+      } ${pipetteActive && !terrain3D ? "cursor-crosshair" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={handleClick}
-      onWheel={handleWheel}
+      onClick={!terrain3D ? handleClick : undefined}
+      onWheel={!terrain3D ? handleWheel : undefined}
     >
       <input
         ref={fileInputRef}
@@ -439,17 +347,18 @@ export default function CanvasArea({
             <span>All processing is local</span>
           </div>
         </div>
-      ) : terrain3D ? (
-        // 3D terrain canvas - full area
+      ) : terrain3D && originalDataRef.current ? (
+        // 3D terrain — R3F canvas
         <div className="absolute inset-0">
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full"
-            style={{ imageRendering: "auto" }}
+          <Terrain3DView
+            sourceData={originalDataRef.current}
+            imageWidth={image.width}
+            imageHeight={image.height}
+            config={terrainConfig}
           />
         </div>
       ) : (
-        // Canvas area
+        // 2D Canvas area
         <div className="relative" style={canvasStyle}>
           <canvas
             ref={canvasRef}

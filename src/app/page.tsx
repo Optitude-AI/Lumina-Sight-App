@@ -7,13 +7,13 @@ import CanvasArea from "@/components/lumina/canvas-area";
 import type { AnalysisMode } from "@/components/lumina/image-analyzer";
 import type { GuideConfig } from "@/components/lumina/guide-renderer";
 import type { ColorInfo } from "@/components/lumina/color-picker";
-import type { Terrain3DConfig, DEFAULT_TERRAIN_CONFIG } from "@/components/lumina/terrain-3d";
+import { type Terrain3DConfig, DEFAULT_TERRAIN_CONFIG } from "@/components/lumina/terrain-3d";
 import { type ToneCurveConfig, DEFAULT_TONE_CONFIG, generateCurveFromSliders } from "@/components/lumina/tone-editor";
 
 const initialTerrainConfig: Terrain3DConfig = {
   elevationScale: 3,
   resolution: 128,
-  colorMode: "original",
+  colorMode: "splices",
   darksCeiling: 25,
   midtonesCeiling: 65,
   darksElevation: 1.0,
