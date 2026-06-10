@@ -171,45 +171,64 @@ export default function Sidebar({
   const [terrainOpen, setTerrainOpen] = useState(true);
 
   const colorWheelRef = useRef<HTMLCanvasElement>(null);
+  const colorWheelBufferRef = useRef<HTMLCanvasElement | null>(null); // Offscreen buffer
   const toneCurveRef = useRef<HTMLCanvasElement>(null);
   const [toneDragging, setToneDragging] = useState(false);
   const [dragInputVal, setDragInputVal] = useState(-1);
 
   const [colorWheelDragging, setColorWheelDragging] = useState(false);
 
-  // Draw color wheel (with indicator if color is picked)
+  // Initialize the offscreen color wheel buffer (once)
   useEffect(() => {
+    const size = 120;
+    const buffer = document.createElement("canvas");
+    buffer.width = size;
+    buffer.height = size;
+    const bctx = buffer.getContext("2d");
+    if (bctx) {
+      drawColorWheel(bctx, size);
+    }
+    colorWheelBufferRef.current = buffer;
+  }, []);
+
+  // Draw color wheel on visible canvas (from buffer + indicator)
+  const renderColorWheel = useCallback(() => {
     const canvas = colorWheelRef.current;
-    if (!canvas) return;
+    const buffer = colorWheelBufferRef.current;
+    if (!canvas || !buffer) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    drawColorWheel(ctx, canvas.width);
+    // Draw the cached wheel
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(buffer, 0, 0);
     // Draw indicator if we have a picked color with a hue
     if (pickedColor && pickedColor.hsl.s > 5) {
       drawColorWheelIndicator(ctx, canvas.width, pickedColor.hsl.h);
     }
   }, [pickedColor]);
 
-  // Handle color wheel pick — shared between click and drag
+  // Redraw whenever pickedColor changes or section opens
+  useEffect(() => {
+    renderColorWheel();
+  }, [renderColorWheel, colorOpen]);
+
+  // Handle color wheel pick — reads from buffer, never from visible canvas
   const pickColorFromWheel = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = colorWheelRef.current;
-    if (!canvas) return;
+    const buffer = colorWheelBufferRef.current;
+    if (!buffer) return;
+    const bctx = buffer.getContext("2d");
+    if (!bctx) return;
 
-    // We need to redraw the wheel first to get clean pixel data
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    drawColorWheel(ctx, canvas.width);
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const scaleX = buffer.width / rect.width;
+    const scaleY = buffer.height / rect.height;
     const x = Math.floor((e.clientX - rect.left) * scaleX);
     const y = Math.floor((e.clientY - rect.top) * scaleY);
 
     // Check bounds
-    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+    if (x < 0 || y < 0 || x >= buffer.width || y >= buffer.height) return;
 
-    const pixel = ctx.getImageData(x, y, 1, 1).data;
+    const pixel = bctx.getImageData(x, y, 1, 1).data;
     const r = pixel[0];
     const g = pixel[1];
     const b = pixel[2];
