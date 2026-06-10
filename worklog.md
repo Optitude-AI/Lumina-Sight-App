@@ -67,3 +67,29 @@ Stage Summary:
 - Curve drag now works — dragging on the tone curve canvas preserves the curve
 - Color wheel is now clickable — clicking picks a color and shows it in the color info section
 - Histogram rendering improved with better normalization and crisp rendering
+
+---
+Task ID: ai-analysis-fix
+Agent: Main
+Task: Fix AI analysis system failing on Vercel deployment
+
+Work Log:
+- Diagnosed root cause: z-ai-web-dev-sdk only works with internal-api.z.ai (private API, 172.25.x.x)
+- Vercel serverless functions cannot reach internal-api.z.ai (private network)
+- The public API at api.z.ai requires different authentication (internal JWT doesn't work)
+- Tried multiple approaches:
+  1. Direct SDK call with env vars (API unreachable from Vercel)
+  2. Proxy to dev server VPC IP (not publicly routable)
+  3. Cloudflare tunnel (unreliable, keeps disconnecting)
+  4. Public ZAI API (auth incompatibility)
+- Implemented client-side fallback: browser tries local API first, then dev server proxy
+- Added CORS support to /api/ai-proxy for cross-origin requests
+- AI analysis WORKS on dev server (space-z.ai) - uses ZAI SDK with .z-ai-config
+- AI analysis DOES NOT WORK on Vercel (lumina-sight.com) - internal API unreachable
+- The space-z.ai deployment is running old code and can't be restarted from this session
+
+Stage Summary:
+- AI analysis confirmed working on dev server (localhost / space-z.ai internal)
+- Vercel deployment shows helpful error message when AI is unavailable
+- The /api/ai-proxy route with CORS is ready - just needs the space-z.ai deployment to be updated
+- Next step: space-z.ai platform deployment needs to be rebuilt with latest code for AI to work on lumina-sight.com
