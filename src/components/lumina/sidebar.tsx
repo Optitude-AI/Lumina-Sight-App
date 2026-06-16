@@ -24,6 +24,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 import Histogram from "./histogram";
 import { drawColorWheel, drawColorWheelIndicator, extractPalette, type ColorInfo } from "./color-picker";
 import { drawToneCurve, TONE_PRESETS, handleCurveDrag, type ToneCurveConfig, DEFAULT_TONE_CONFIG } from "./tone-editor";
@@ -33,6 +39,7 @@ import type { GuideType, GuideConfig } from "./guide-renderer";
 
 export interface SidebarProps {
   open: boolean;
+  onOpenChange?: (open: boolean) => void;
   // Analysis
   analysisMode: AnalysisMode;
   onAnalysisModeChange: (mode: AnalysisMode) => void;
@@ -139,7 +146,7 @@ function SectionHeader({
   return (
     <CollapsibleTrigger asChild>
       <button
-        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-accent/50 rounded-md transition-colors"
+        className="flex items-center gap-2 w-full px-3 py-2.5 hover:bg-accent/50 rounded-md transition-colors min-h-[44px]"
         onClick={onToggle}
       >
         <Icon className={`size-4 ${color}`} />
@@ -156,6 +163,7 @@ function SectionHeader({
 
 export default function Sidebar({
   open,
+  onOpenChange,
   analysisMode,
   onAnalysisModeChange,
   opacity,
@@ -183,12 +191,15 @@ export default function Sidebar({
   onAIAnalysisTypeChange,
   onAIAnalyze,
 }: SidebarProps) {
-  const [analysisOpen, setAnalysisOpen] = useState(true);
-  const [histogramOpen, setHistogramOpen] = useState(true);
-  const [compositionOpen, setCompositionOpen] = useState(true);
-  const [toneOpen, setToneOpen] = useState(true);
-  const [colorOpen, setColorOpen] = useState(true);
-  const [terrainOpen, setTerrainOpen] = useState(true);
+  const isMobile = useIsMobile();
+
+  // Default sections collapsed on mobile for easier navigation
+  const [analysisOpen, setAnalysisOpen] = useState(!isMobile);
+  const [histogramOpen, setHistogramOpen] = useState(!isMobile);
+  const [compositionOpen, setCompositionOpen] = useState(!isMobile);
+  const [toneOpen, setToneOpen] = useState(!isMobile);
+  const [colorOpen, setColorOpen] = useState(!isMobile);
+  const [terrainOpen, setTerrainOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
 
   const colorWheelRef = useRef<HTMLCanvasElement>(null);
@@ -199,9 +210,12 @@ export default function Sidebar({
 
   const [colorWheelDragging, setColorWheelDragging] = useState(false);
 
+  // Color wheel size: larger on mobile for easier touch targets
+  const colorWheelSize = isMobile ? 180 : 120;
+
   // Initialize the offscreen color wheel buffer (once)
   useEffect(() => {
-    const size = 120;
+    const size = isMobile ? 240 : 120; // Higher resolution buffer for mobile
     const buffer = document.createElement("canvas");
     buffer.width = size;
     buffer.height = size;
@@ -210,7 +224,7 @@ export default function Sidebar({
       drawColorWheel(bctx, size);
     }
     colorWheelBufferRef.current = buffer;
-  }, []);
+  }, [isMobile]);
 
   // Draw color wheel on visible canvas (from buffer + indicator)
   const renderColorWheel = useCallback(() => {
@@ -221,7 +235,7 @@ export default function Sidebar({
     if (!ctx) return;
     // Draw the cached wheel
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(buffer, 0, 0);
+    ctx.drawImage(buffer, 0, 0, canvas.width, canvas.height);
     // Draw indicator if we have a picked color with a hue
     if (pickedColor && pickedColor.hsl.s > 5) {
       drawColorWheelIndicator(ctx, canvas.width, pickedColor.hsl.h);
@@ -233,18 +247,20 @@ export default function Sidebar({
     renderColorWheel();
   }, [renderColorWheel, colorOpen]);
 
-  // Handle color wheel pick — reads from buffer, never from visible canvas
-  const pickColorFromWheel = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Pick color from wheel at given client coordinates (works for both mouse and touch)
+  const pickColorFromWheelAt = useCallback((clientX: number, clientY: number) => {
     const buffer = colorWheelBufferRef.current;
     if (!buffer) return;
     const bctx = buffer.getContext("2d");
     if (!bctx) return;
 
-    const rect = e.currentTarget.getBoundingClientRect();
+    const canvas = colorWheelRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const scaleX = buffer.width / rect.width;
     const scaleY = buffer.height / rect.height;
-    const x = Math.floor((e.clientX - rect.left) * scaleX);
-    const y = Math.floor((e.clientY - rect.top) * scaleY);
+    const x = Math.floor((clientX - rect.left) * scaleX);
+    const y = Math.floor((clientY - rect.top) * scaleY);
 
     // Check bounds
     if (x < 0 || y < 0 || x >= buffer.width || y >= buffer.height) return;
@@ -267,17 +283,35 @@ export default function Sidebar({
     }
   }, [onPickColor]);
 
+  // Mouse handlers for color wheel
   const handleColorWheelMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     setColorWheelDragging(true);
-    pickColorFromWheel(e);
-  }, [pickColorFromWheel]);
+    pickColorFromWheelAt(e.clientX, e.clientY);
+  }, [pickColorFromWheelAt]);
 
   const handleColorWheelMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!colorWheelDragging) return;
-    pickColorFromWheel(e);
-  }, [colorWheelDragging, pickColorFromWheel]);
+    pickColorFromWheelAt(e.clientX, e.clientY);
+  }, [colorWheelDragging, pickColorFromWheelAt]);
 
   const handleColorWheelMouseUp = useCallback(() => {
+    setColorWheelDragging(false);
+  }, []);
+
+  // Touch handlers for color wheel
+  const handleColorWheelTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    setColorWheelDragging(true);
+    if (e.touches[0]) pickColorFromWheelAt(e.touches[0].clientX, e.touches[0].clientY);
+  }, [pickColorFromWheelAt]);
+
+  const handleColorWheelTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!colorWheelDragging) return;
+    if (e.touches[0]) pickColorFromWheelAt(e.touches[0].clientX, e.touches[0].clientY);
+  }, [colorWheelDragging, pickColorFromWheelAt]);
+
+  const handleColorWheelTouchEnd = useCallback(() => {
     setColorWheelDragging(false);
   }, []);
 
@@ -300,14 +334,14 @@ export default function Sidebar({
     onPaletteChange(colors);
   }, [imageData, onPaletteChange]);
 
-  // Helper: get canvas-space coordinates from mouse event
-  const getCanvasCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+  // Helper: get canvas-space coordinates from client coordinates (works for both mouse and touch)
+  const getCanvasCoordsFromClient = useCallback((clientX: number, clientY: number, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
     };
   }, []);
 
@@ -315,30 +349,56 @@ export default function Sidebar({
   const handleToneMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     setToneDragging(true);
     const canvas = e.currentTarget;
-    const { x, y } = getCanvasCoords(e, canvas);
+    const { x, y } = getCanvasCoordsFromClient(e.clientX, e.clientY, canvas);
     const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
     setDragInputVal(result.inputVal);
     onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
-  }, [toneConfig, onToneCurveChange, getCanvasCoords]);
+  }, [toneConfig, onToneCurveChange, getCanvasCoordsFromClient]);
 
   const handleToneMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!toneDragging) return;
     const canvas = e.currentTarget;
-    const { x, y } = getCanvasCoords(e, canvas);
+    const { x, y } = getCanvasCoordsFromClient(e.clientX, e.clientY, canvas);
     const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
     setDragInputVal(result.inputVal);
     onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
-  }, [toneDragging, toneConfig, onToneCurveChange, getCanvasCoords]);
+  }, [toneDragging, toneConfig, onToneCurveChange, getCanvasCoordsFromClient]);
 
   const handleToneMouseUp = useCallback(() => {
     setToneDragging(false);
     setDragInputVal(-1);
   }, []);
 
-  if (!open) return null;
+  // Tone curve touch handlers
+  const handleToneTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    setToneDragging(true);
+    const canvas = e.currentTarget;
+    if (!e.touches[0]) return;
+    const { x, y } = getCanvasCoordsFromClient(e.touches[0].clientX, e.touches[0].clientY, canvas);
+    const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
+    setDragInputVal(result.inputVal);
+    onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
+  }, [toneConfig, onToneCurveChange, getCanvasCoordsFromClient]);
 
-  return (
-    <aside className="w-80 border-r border-border bg-card/30 flex flex-col shrink-0 overflow-y-auto">
+  const handleToneTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!toneDragging || !e.touches[0]) return;
+    const canvas = e.currentTarget;
+    const { x, y } = getCanvasCoordsFromClient(e.touches[0].clientX, e.touches[0].clientY, canvas);
+    const result = handleCurveDrag(x, y, canvas.width, canvas.height, toneConfig.curvePoints);
+    setDragInputVal(result.inputVal);
+    onToneCurveChange({ ...toneConfig, curvePoints: result.curve });
+  }, [toneDragging, toneConfig, onToneCurveChange, getCanvasCoordsFromClient]);
+
+  const handleToneTouchEnd = useCallback(() => {
+    setToneDragging(false);
+    setDragInputVal(-1);
+  }, []);
+
+  // The actual sidebar content (shared between Sheet and aside)
+  const sidebarContent = (
+    <>
       {/* 1. Analysis Section */}
       <Collapsible open={analysisOpen} onOpenChange={setAnalysisOpen}>
         <div className="px-2 pt-2">
@@ -358,7 +418,7 @@ export default function Sidebar({
                   key={mode}
                   variant={analysisMode === mode ? "default" : "outline"}
                   size="sm"
-                  className={`h-8 text-xs justify-start gap-1.5 ${
+                  className={`min-h-[40px] text-xs justify-start gap-1.5 ${
                     analysisMode === mode
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
                       : ""
@@ -448,7 +508,7 @@ export default function Sidebar({
                   key={key}
                   variant={guideConfig.activeGuide === key ? "default" : "outline"}
                   size="sm"
-                  className={`h-7 text-xs ${
+                  className={`min-h-[40px] text-xs ${
                     guideConfig.activeGuide === key
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
                       : ""
@@ -491,16 +551,16 @@ export default function Sidebar({
                   type="color"
                   value={guideConfig.guideColor}
                   onChange={(e) => onGuideConfigChange({ ...guideConfig, guideColor: e.target.value })}
-                  className="size-7 rounded border border-border cursor-pointer bg-transparent"
+                  className="size-9 rounded border border-border cursor-pointer bg-transparent"
                 />
                 <span className="text-xs text-muted-foreground font-mono">{guideConfig.guideColor}</span>
               </div>
-              {/* Preset color buttons */}
-              <div className="flex items-center gap-1.5">
+              {/* Preset color buttons - larger tap targets */}
+              <div className="flex items-center gap-2">
                 {GUIDE_PRESET_COLORS.map(({ label, color }) => (
                   <button
                     key={label}
-                    className={`size-6 rounded border-2 transition-colors ${
+                    className={`size-9 rounded-full border-2 transition-colors ${
                       guideConfig.guideColor === color ? "border-orange-500" : "border-border"
                     }`}
                     style={{ backgroundColor: color }}
@@ -532,14 +592,17 @@ export default function Sidebar({
             {/* Tone curve canvas */}
             <canvas
               ref={toneCurveRef}
-              width={260}
-              height={160}
+              width={isMobile ? 600 : 260}
+              height={isMobile ? 360 : 160}
               className="w-full rounded-md cursor-crosshair"
-              style={{ imageRendering: "auto" }}
+              style={{ imageRendering: "auto", touchAction: "none" }}
               onMouseDown={handleToneMouseDown}
               onMouseMove={handleToneMouseMove}
               onMouseUp={handleToneMouseUp}
               onMouseLeave={handleToneMouseUp}
+              onTouchStart={handleToneTouchStart}
+              onTouchMove={handleToneTouchMove}
+              onTouchEnd={handleToneTouchEnd}
             />
 
             {/* Reset + Preset tone curve buttons */}
@@ -549,7 +612,7 @@ export default function Sidebar({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 text-xs text-orange-400 hover:text-orange-300 px-2"
+                  className="min-h-[36px] text-xs text-orange-400 hover:text-orange-300 px-2"
                   onClick={() => onToneCurveChange({ ...DEFAULT_TONE_CONFIG })}
                 >
                   Reset to Flat
@@ -565,7 +628,7 @@ export default function Sidebar({
                         : "outline"
                     }
                     size="sm"
-                    className={`h-6 text-xs ${
+                    className={`min-h-[36px] text-xs ${
                       preset.name === "Linear" && toneConfig.curvePoints.every((v, i) => v === i)
                         ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
                         : ""
@@ -662,58 +725,62 @@ export default function Sidebar({
         </div>
         <CollapsibleContent>
           <div className="px-3 pb-3 space-y-3">
-            {/* Color wheel — click to pick a hue */}
+            {/* Color wheel — click/touch to pick a hue */}
             <div className="flex justify-center">
               <canvas
                 ref={colorWheelRef}
-                width={120}
-                height={120}
+                width={colorWheelSize}
+                height={colorWheelSize}
                 className="rounded-full cursor-crosshair"
+                style={{ width: colorWheelSize, height: colorWheelSize, touchAction: "none" }}
                 onMouseDown={handleColorWheelMouseDown}
                 onMouseMove={handleColorWheelMouseMove}
                 onMouseUp={handleColorWheelMouseUp}
                 onMouseLeave={handleColorWheelMouseUp}
+                onTouchStart={handleColorWheelTouchStart}
+                onTouchMove={handleColorWheelTouchMove}
+                onTouchEnd={handleColorWheelTouchEnd}
               />
             </div>
 
             {/* RGB channel checkboxes */}
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2 min-h-[44px]">
                 <Checkbox
                   id="ch-r"
                   checked={rgbChannels.r}
                   onCheckedChange={(checked) =>
                     onRgbChannelsChange({ ...rgbChannels, r: !!checked })
                   }
-                  className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
+                  className="size-5 data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
                 />
-                <Label htmlFor="ch-r" className="text-xs text-red-400 cursor-pointer">
+                <Label htmlFor="ch-r" className="text-sm text-red-400 cursor-pointer">
                   R
                 </Label>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2 min-h-[44px]">
                 <Checkbox
                   id="ch-g"
                   checked={rgbChannels.g}
                   onCheckedChange={(checked) =>
                     onRgbChannelsChange({ ...rgbChannels, g: !!checked })
                   }
-                  className="data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
+                  className="size-5 data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
                 />
-                <Label htmlFor="ch-g" className="text-xs text-green-400 cursor-pointer">
+                <Label htmlFor="ch-g" className="text-sm text-green-400 cursor-pointer">
                   G
                 </Label>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2 min-h-[44px]">
                 <Checkbox
                   id="ch-b"
                   checked={rgbChannels.b}
                   onCheckedChange={(checked) =>
                     onRgbChannelsChange({ ...rgbChannels, b: !!checked })
                   }
-                  className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                  className="size-5 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
                 />
-                <Label htmlFor="ch-b" className="text-xs text-blue-400 cursor-pointer">
+                <Label htmlFor="ch-b" className="text-sm text-blue-400 cursor-pointer">
                   B
                 </Label>
               </div>
@@ -724,7 +791,7 @@ export default function Sidebar({
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <div
-                    className="size-8 rounded border border-border"
+                    className="size-10 rounded border border-border"
                     style={{ backgroundColor: pickedColor.hex }}
                   />
                   <div className="text-xs space-y-0.5">
@@ -751,11 +818,11 @@ export default function Sidebar({
             {palette.length > 0 && (
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Extracted Palette</Label>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {palette.map((color, i) => (
                     <div key={i} className="group relative">
                       <div
-                        className="size-7 rounded border border-border cursor-pointer hover:scale-110 transition-transform"
+                        className="size-9 rounded border border-border cursor-pointer hover:scale-110 transition-transform"
                         style={{ backgroundColor: color.hex }}
                         title={`${color.hex} — Lum: ${Math.round(color.luminance)}`}
                       />
@@ -790,7 +857,7 @@ export default function Sidebar({
                   key={key}
                   variant={aiAnalysisType === key ? "default" : "outline"}
                   size="sm"
-                  className={`h-7 text-xs ${
+                  className={`min-h-[40px] text-xs ${
                     aiAnalysisType === key
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
                       : ""
@@ -804,7 +871,7 @@ export default function Sidebar({
 
             {/* Analyze button */}
             <Button
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white"
+              className="w-full bg-orange-500 hover:bg-orange-600 text-white min-h-[44px]"
               size="sm"
               onClick={onAIAnalyze}
               disabled={!hasImage || aiAnalysisLoading}
@@ -898,7 +965,7 @@ export default function Sidebar({
                     key={mode}
                     variant={terrainConfig.colorMode === mode ? "default" : "outline"}
                     size="sm"
-                    className={`h-6 text-xs capitalize ${
+                    className={`min-h-[36px] text-xs capitalize ${
                       terrainConfig.colorMode === mode
                         ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
                         : ""
@@ -1004,28 +1071,28 @@ export default function Sidebar({
 
             {/* Switches */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between min-h-[44px]">
                 <Label className="text-xs">Scale Grid</Label>
                 <Switch
                   checked={terrainConfig.scaleGrid}
                   onCheckedChange={(checked) => onTerrainConfigChange({ ...terrainConfig, scaleGrid: checked })}
                 />
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between min-h-[44px]">
                 <Label className="text-xs">Wireframe</Label>
                 <Switch
                   checked={terrainConfig.wireframe}
                   onCheckedChange={(checked) => onTerrainConfigChange({ ...terrainConfig, wireframe: checked })}
                 />
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between min-h-[44px]">
                 <Label className="text-xs">Auto Rotate</Label>
                 <Switch
                   checked={terrainConfig.autoRotate}
                   onCheckedChange={(checked) => onTerrainConfigChange({ ...terrainConfig, autoRotate: checked })}
                 />
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between min-h-[44px]">
                 <Label className="text-xs">Contour Lines</Label>
                 <Switch
                   checked={terrainConfig.contourLines}
@@ -1036,6 +1103,32 @@ export default function Sidebar({
           </div>
         </CollapsibleContent>
       </Collapsible>
+    </>
+  );
+
+  // Mobile: Render as Sheet (slide-in drawer from left)
+  if (isMobile) {
+    return (
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="left" className="w-[85vw] max-w-sm p-0 overflow-y-auto">
+          <SheetTitle className="px-4 pt-4 pb-2 text-sm font-semibold flex items-center gap-2">
+            <div className="size-5 rounded bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+              <Eye className="size-3 text-white" />
+            </div>
+            Lumina Sight Controls
+          </SheetTitle>
+          {sidebarContent}
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  // Desktop: inline aside (current behavior)
+  if (!open) return null;
+
+  return (
+    <aside className="w-80 border-r border-border bg-card/30 flex flex-col shrink-0 overflow-y-auto">
+      {sidebarContent}
     </aside>
   );
 }

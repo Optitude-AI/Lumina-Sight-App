@@ -86,25 +86,10 @@ export default function CropTool({
     []
   );
 
-  const handleMouseDown = useCallback(
-    (handle: DragHandle, e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragHandle(handle);
-      setDragStart({ x: e.clientX, y: e.clientY });
-      setCropStart({ ...crop });
-    },
-    [crop]
-  );
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!dragHandle) return;
-
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
+  // Compute new crop from drag delta
+  const computeDragCrop = useCallback(
+    (dx: number, dy: number) => {
       const ratio = ASPECT_RATIOS.find((a) => a.key === aspectRatio)?.ratio ?? null;
-
       let newCrop = { ...cropStart };
 
       switch (dragHandle) {
@@ -164,12 +149,69 @@ export default function CropTool({
       newCrop.width = Math.min(newCrop.width, displayWidth - newCrop.x);
       newCrop.height = Math.min(newCrop.height, displayHeight - newCrop.y);
 
-      setCrop(newCrop);
+      return newCrop;
     },
-    [dragHandle, dragStart, cropStart, displayWidth, displayHeight, aspectRatio, applyAspectRatio]
+    [dragHandle, cropStart, displayWidth, displayHeight, aspectRatio, applyAspectRatio]
+  );
+
+  // Start drag from client coordinates
+  const startDrag = useCallback(
+    (handle: DragHandle, clientX: number, clientY: number) => {
+      setDragHandle(handle);
+      setDragStart({ x: clientX, y: clientY });
+      setCropStart({ ...crop });
+    },
+    [crop]
+  );
+
+  // Mouse handlers
+  const handleMouseDown = useCallback(
+    (handle: DragHandle, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startDrag(handle, e.clientX, e.clientY);
+    },
+    [startDrag]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!dragHandle) return;
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      setCrop(computeDragCrop(dx, dy));
+    },
+    [dragHandle, dragStart, computeDragCrop]
   );
 
   const handleMouseUp = useCallback(() => {
+    setDragHandle(null);
+  }, []);
+
+  // Touch handlers
+  const handleTouchStart = useCallback(
+    (handle: DragHandle, e: React.TouchEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.touches[0]) {
+        startDrag(handle, e.touches[0].clientX, e.touches[0].clientY);
+      }
+    },
+    [startDrag]
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!dragHandle || !e.touches[0]) return;
+      e.preventDefault();
+      const dx = e.touches[0].clientX - dragStart.x;
+      const dy = e.touches[0].clientY - dragStart.y;
+      setCrop(computeDragCrop(dx, dy));
+    },
+    [dragHandle, dragStart, computeDragCrop]
+  );
+
+  const handleTouchEnd = useCallback(() => {
     setDragHandle(null);
   }, []);
 
@@ -218,15 +260,18 @@ export default function CropTool({
     { x1: crop.x, y1: crop.y + (crop.height * 2) / 3, x2: crop.x + crop.width, y2: crop.y + (crop.height * 2) / 3 },
   ];
 
-  const handleSize = 8;
+  const handleSize = 12; // Larger handles for mobile touch (was 8)
 
   return (
     <div
       ref={overlayRef}
       className="absolute inset-0"
+      style={{ touchAction: "none" }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {/* Dark overlay - top */}
       <div
@@ -260,6 +305,7 @@ export default function CropTool({
           cursor: "move",
         }}
         onMouseDown={(e) => handleMouseDown("move", e)}
+        onTouchStart={(e) => handleTouchStart("move", e)}
       >
         {/* Rule of thirds grid */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none">
@@ -276,77 +322,87 @@ export default function CropTool({
           ))}
         </svg>
 
-        {/* Corner handles */}
+        {/* Corner handles — larger for touch */}
         {/* Top-left */}
         <div
-          className="absolute bg-white border border-white"
+          className="absolute bg-white border border-white/80 rounded-sm"
           style={{ left: -handleSize / 2, top: -handleSize / 2, width: handleSize, height: handleSize, cursor: "nw-resize" }}
           onMouseDown={(e) => handleMouseDown("tl", e)}
+          onTouchStart={(e) => handleTouchStart("tl", e)}
         />
         {/* Top-right */}
         <div
-          className="absolute bg-white border border-white"
+          className="absolute bg-white border border-white/80 rounded-sm"
           style={{ right: -handleSize / 2, top: -handleSize / 2, width: handleSize, height: handleSize, cursor: "ne-resize" }}
           onMouseDown={(e) => handleMouseDown("tr", e)}
+          onTouchStart={(e) => handleTouchStart("tr", e)}
         />
         {/* Bottom-left */}
         <div
-          className="absolute bg-white border border-white"
+          className="absolute bg-white border border-white/80 rounded-sm"
           style={{ left: -handleSize / 2, bottom: -handleSize / 2, width: handleSize, height: handleSize, cursor: "sw-resize" }}
           onMouseDown={(e) => handleMouseDown("bl", e)}
+          onTouchStart={(e) => handleTouchStart("bl", e)}
         />
         {/* Bottom-right */}
         <div
-          className="absolute bg-white border border-white"
+          className="absolute bg-white border border-white/80 rounded-sm"
           style={{ right: -handleSize / 2, bottom: -handleSize / 2, width: handleSize, height: handleSize, cursor: "se-resize" }}
           onMouseDown={(e) => handleMouseDown("br", e)}
+          onTouchStart={(e) => handleTouchStart("br", e)}
         />
 
-        {/* Edge handles */}
+        {/* Edge handles — wider for touch */}
         {/* Top */}
         <div
-          className="absolute bg-white/80"
-          style={{ left: "50%", top: -3, width: 24, height: 6, transform: "translateX(-50%)", cursor: "n-resize" }}
+          className="absolute bg-white/80 rounded-sm"
+          style={{ left: "50%", top: -4, width: 32, height: 8, transform: "translateX(-50%)", cursor: "n-resize" }}
           onMouseDown={(e) => handleMouseDown("t", e)}
+          onTouchStart={(e) => handleTouchStart("t", e)}
         />
         {/* Bottom */}
         <div
-          className="absolute bg-white/80"
-          style={{ left: "50%", bottom: -3, width: 24, height: 6, transform: "translateX(-50%)", cursor: "s-resize" }}
+          className="absolute bg-white/80 rounded-sm"
+          style={{ left: "50%", bottom: -4, width: 32, height: 8, transform: "translateX(-50%)", cursor: "s-resize" }}
           onMouseDown={(e) => handleMouseDown("b", e)}
+          onTouchStart={(e) => handleTouchStart("b", e)}
         />
         {/* Left */}
         <div
-          className="absolute bg-white/80"
-          style={{ left: -3, top: "50%", width: 6, height: 24, transform: "translateY(-50%)", cursor: "w-resize" }}
+          className="absolute bg-white/80 rounded-sm"
+          style={{ left: -4, top: "50%", width: 8, height: 32, transform: "translateY(-50%)", cursor: "w-resize" }}
           onMouseDown={(e) => handleMouseDown("l", e)}
+          onTouchStart={(e) => handleTouchStart("l", e)}
         />
         {/* Right */}
         <div
-          className="absolute bg-white/80"
-          style={{ right: -3, top: "50%", width: 6, height: 24, transform: "translateY(-50%)", cursor: "e-resize" }}
+          className="absolute bg-white/80 rounded-sm"
+          style={{ right: -4, top: "50%", width: 8, height: 32, transform: "translateY(-50%)", cursor: "e-resize" }}
           onMouseDown={(e) => handleMouseDown("r", e)}
+          onTouchStart={(e) => handleTouchStart("r", e)}
         />
       </div>
 
-      {/* Crop toolbar */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 z-10">
+      {/* Crop toolbar — responsive: wraps on mobile */}
+      <div className="absolute bottom-4 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 flex flex-wrap items-center justify-center gap-1.5 px-3 py-2 bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 z-10">
         {/* Aspect ratio buttons */}
-        {ASPECT_RATIOS.map((ar) => (
-          <button
-            key={ar.key}
-            className={`px-2 py-1 text-xs rounded transition-colors ${
-              aspectRatio === ar.key
-                ? "bg-orange-500 text-white"
-                : "text-white/70 hover:text-white hover:bg-white/10"
-            }`}
-            onClick={() => handleAspectRatioChange(ar.key)}
-          >
-            {ar.label}
-          </button>
-        ))}
+        <div className="flex flex-wrap items-center gap-1">
+          {ASPECT_RATIOS.map((ar) => (
+            <button
+              key={ar.key}
+              className={`px-2.5 py-1.5 text-xs rounded transition-colors min-h-[36px] ${
+                aspectRatio === ar.key
+                  ? "bg-orange-500 text-white"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+              onClick={() => handleAspectRatioChange(ar.key)}
+            >
+              {ar.label}
+            </button>
+          ))}
+        </div>
 
-        <div className="w-px h-6 bg-white/20" />
+        <div className="w-px h-6 bg-white/20 hidden sm:block" />
 
         {/* Rotation slider */}
         <div className="flex items-center gap-2">
@@ -357,11 +413,11 @@ export default function CropTool({
             max={45}
             value={rotation}
             onChange={(e) => setRotation(Number(e.target.value))}
-            className="w-20 h-1 accent-orange-500"
+            className="w-16 sm:w-20 h-1 accent-orange-500"
           />
           <span className="text-xs text-white/70 w-8 text-center">{rotation}°</span>
           <button
-            className="px-2 py-1 text-xs text-white/70 hover:text-white hover:bg-white/10 rounded transition-colors"
+            className="px-2 py-1.5 text-xs text-white/70 hover:text-white hover:bg-white/10 rounded transition-colors min-h-[36px]"
             onClick={handleRotate90}
             title="Rotate 90°"
           >
@@ -369,28 +425,30 @@ export default function CropTool({
           </button>
         </div>
 
-        <div className="w-px h-6 bg-white/20" />
+        <div className="w-px h-6 bg-white/20 hidden sm:block" />
 
         {/* Dimension info */}
         <span className="text-xs text-white/50 tabular-nums">
           {cropW} × {cropH}
         </span>
 
-        <div className="w-px h-6 bg-white/20" />
+        <div className="w-px h-6 bg-white/20 hidden sm:block" />
 
         {/* Apply/Cancel */}
-        <button
-          className="px-3 py-1 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors font-medium"
-          onClick={handleApply}
-        >
-          Apply
-        </button>
-        <button
-          className="px-3 py-1 text-xs text-white/70 hover:text-white hover:bg-white/10 rounded transition-colors"
-          onClick={onCropCancel}
-        >
-          Cancel
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            className="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors font-medium min-h-[36px]"
+            onClick={handleApply}
+          >
+            Apply
+          </button>
+          <button
+            className="px-3 py-1.5 text-xs text-white/70 hover:text-white hover:bg-white/10 rounded transition-colors min-h-[36px]"
+            onClick={onCropCancel}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

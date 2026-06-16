@@ -162,3 +162,38 @@
   width: 100%;
   aspect-ratio: 1;
 }
+
+/* Mobile touch optimization */
+@media (max-width: 767px) {
+  /* Prevent browser gestures on interactive canvases */
+  canvas {
+    touch-action: none;
+  }
+
+  /* Larger slider thumbs on mobile */
+  .slider-orange [data-slot="slider-thumb"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Prevent pull-to-refresh on the app */
+  html, body {
+    overscroll-behavior: none;
+  }
+
+  /* Ensure inputs don't zoom on iOS */
+  input[type="range"] {
+    height: 28px;
+  }
+
+  /* Larger switch toggle on mobile */
+  [data-slot="switch-thumb"] {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Prevent double-tap zoom on interactive elements */
+button, [role="button"] {
+  touch-action: manipulation;
+}

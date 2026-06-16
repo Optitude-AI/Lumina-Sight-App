@@ -3,6 +3,7 @@
 import { useCallback, useRef, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Upload, ShieldCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { AnalysisMode } from "./image-analyzer";
 import { applyAnalysis } from "./image-analyzer";
 import type { GuideConfig } from "./guide-renderer";
@@ -77,6 +78,9 @@ export default function CanvasArea({
 
   // Track container size via state
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+
+  // Pinch-to-zoom state
+  const pinchStartRef = useRef<{ dist: number; zoom: number } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -177,9 +181,9 @@ export default function CanvasArea({
     [handleFile]
   );
 
-  // Canvas click for pipette
-  const handleCanvasClick = useCallback(
-    (e: React.MouseEvent) => {
+  // Pick color at given client coordinates (shared by mouse and touch)
+  const pickColorAtClient = useCallback(
+    (clientX: number, clientY: number) => {
       if (!pipetteActive || !imageData) return;
       if (cropActive) return;
 
@@ -189,8 +193,8 @@ export default function CanvasArea({
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
-      const x = Math.floor((e.clientX - rect.left) * scaleX);
-      const y = Math.floor((e.clientY - rect.top) * scaleY);
+      const x = Math.floor((clientX - rect.left) * scaleX);
+      const y = Math.floor((clientY - rect.top) * scaleY);
 
       const color = getColorAtPixel(imageData, x, y);
       onPickColor(color);
@@ -198,25 +202,44 @@ export default function CanvasArea({
     [pipetteActive, imageData, onPickColor, canvasRef, cropActive]
   );
 
+  // Canvas click for pipette (mouse)
+  const handleCanvasClick = useCallback(
+    (e: React.MouseEvent) => {
+      pickColorAtClient(e.clientX, e.clientY);
+    },
+    [pickColorAtClient]
+  );
+
   // Mouse move for live color preview
   const handleCanvasMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!pipetteActive || !imageData) return;
-      if (cropActive) return;
-
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const x = Math.floor((e.clientX - rect.left) * scaleX);
-      const y = Math.floor((e.clientY - rect.top) * scaleY);
-
-      const color = getColorAtPixel(imageData, x, y);
-      onPickColor(color);
+      pickColorAtClient(e.clientX, e.clientY);
     },
-    [pipetteActive, imageData, onPickColor, canvasRef, cropActive]
+    [pickColorAtClient]
+  );
+
+  // Touch start for pipette
+  const handleCanvasTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (!pipetteActive) return;
+      e.preventDefault();
+      if (e.touches[0]) {
+        pickColorAtClient(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    },
+    [pipetteActive, pickColorAtClient]
+  );
+
+  // Touch move for pipette
+  const handleCanvasTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!pipetteActive) return;
+      e.preventDefault();
+      if (e.touches[0]) {
+        pickColorAtClient(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    },
+    [pipetteActive, pickColorAtClient]
   );
 
   // Mouse wheel for zoom
@@ -228,6 +251,76 @@ export default function CanvasArea({
       onZoomChange(Math.max(10, Math.min(400, zoom + delta)));
     },
     [image, zoom, onZoomChange]
+  );
+
+  // Pinch-to-zoom: touch start
+  const handlePinchTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        pinchStartRef.current = { dist, zoom };
+      }
+    },
+    [zoom]
+  );
+
+  // Pinch-to-zoom: touch move
+  const handlePinchTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length === 2 && pinchStartRef.current) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const scale = dist / pinchStartRef.current.dist;
+        onZoomChange(Math.max(10, Math.min(400, Math.round(pinchStartRef.current.zoom * scale))));
+      }
+    },
+    [onZoomChange]
+  );
+
+  // Pinch-to-zoom: touch end
+  const handlePinchTouchEnd = useCallback(() => {
+    pinchStartRef.current = null;
+  }, []);
+
+  // Combined container touch handler for pinch zoom
+  const handleContainerTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (!image || terrain3D) return;
+      // If pipette is active and single touch, handle pipette
+      if (pipetteActive && e.touches.length === 1) {
+        handleCanvasTouchStart(e);
+      }
+      // If two touches, handle pinch zoom
+      if (e.touches.length === 2) {
+        handlePinchTouchStart(e);
+      }
+    },
+    [image, terrain3D, pipetteActive, handleCanvasTouchStart, handlePinchTouchStart]
+  );
+
+  const handleContainerTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!image || terrain3D) return;
+      if (pipetteActive && e.touches.length === 1) {
+        handleCanvasTouchMove(e);
+      }
+      if (e.touches.length === 2) {
+        handlePinchTouchMove(e);
+      }
+    },
+    [image, terrain3D, pipetteActive, handleCanvasTouchMove, handlePinchTouchMove]
+  );
+
+  const handleContainerTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      handlePinchTouchEnd();
+    },
+    [handlePinchTouchEnd]
   );
 
   // Render 2D canvas (non-terrain mode) — debounced with requestAnimationFrame
@@ -365,6 +458,9 @@ export default function CanvasArea({
       onDrop={handleDrop}
       onClick={!terrain3D && !cropActive ? handleClick : undefined}
       onWheel={!terrain3D ? handleWheel : undefined}
+      onTouchStart={handleContainerTouchStart}
+      onTouchMove={handleContainerTouchMove}
+      onTouchEnd={handleContainerTouchEnd}
     >
       <input
         ref={fileInputRef}
@@ -375,9 +471,9 @@ export default function CanvasArea({
       />
 
       {!image ? (
-        // Drop zone
+        // Drop zone / upload area
         <div
-          className={`flex flex-col items-center gap-4 p-8 border-2 border-dashed rounded-xl transition-colors ${
+          className={`flex flex-col items-center gap-4 p-8 border-2 border-dashed rounded-xl transition-colors max-w-sm mx-4 ${
             isDragOver
               ? "border-orange-500 bg-orange-500/10"
               : "border-border hover:border-orange-500/50"
@@ -388,12 +484,26 @@ export default function CanvasArea({
           </div>
           <div className="text-center space-y-1">
             <p className="text-sm font-medium">
-              Drop an image here or click to browse
+              Drop an image here
             </p>
             <p className="text-xs text-muted-foreground">
-              Supports JPG, PNG, WebP, GIF, BMP
+              or tap the button below
             </p>
           </div>
+          {/* Visible upload button for mobile */}
+          <Button
+            className="bg-orange-500 hover:bg-orange-600 text-white min-h-[48px] px-6"
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+          >
+            <Upload className="size-4 mr-2" />
+            Browse Files
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Supports JPG, PNG, WebP, GIF, BMP
+          </p>
           <div className="flex items-center gap-1.5 text-xs text-green-500">
             <ShieldCheck className="size-3" />
             <span>All processing is local</span>
@@ -426,7 +536,7 @@ export default function CanvasArea({
           {!cropActive && (
             <div
               className="absolute inset-0"
-              style={{ cursor: pipetteActive ? "crosshair" : "default" }}
+              style={{ cursor: pipetteActive ? "crosshair" : "default", touchAction: pipetteActive ? "none" : "auto" }}
               onClick={handleCanvasClick}
               onMouseMove={handleCanvasMouseMove}
             />

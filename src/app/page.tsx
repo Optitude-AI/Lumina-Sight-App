@@ -12,6 +12,7 @@ import { type Terrain3DConfig, DEFAULT_TERRAIN_CONFIG } from "@/components/lumin
 import { type ToneCurveConfig, DEFAULT_TONE_CONFIG, generateCurveFromSliders } from "@/components/lumina/tone-editor";
 import { useHistory, type HistorySnapshot } from "@/components/lumina/use-history";
 import type { CropRegion } from "@/components/lumina/crop-tool";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const initialTerrainConfig: Terrain3DConfig = {
   elevationScale: 3,
@@ -36,7 +37,8 @@ export default function Home() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // UI state
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false); // Default closed on mobile, user opens via Sheet
   const [terrain3D, setTerrain3D] = useState(false);
 
   // Analysis state
@@ -477,6 +479,7 @@ export default function Home() {
       <div className="flex flex-1 min-h-0">
         <Sidebar
           open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
           analysisMode={analysisMode}
           onAnalysisModeChange={handleAnalysisModeChange}
           opacity={opacity}
