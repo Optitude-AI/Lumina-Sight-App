@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Upload, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AnalysisMode } from "./image-analyzer";
-import { applyAnalysis } from "./image-analyzer";
+import { applyAnalysis, computeJourneyPoints } from "./image-analyzer";
 import type { GuideConfig } from "./guide-renderer";
 import { drawGuides } from "./guide-renderer";
 import { getColorAtPixel, type ColorInfo } from "./color-picker";
@@ -15,6 +15,81 @@ import CropTool, { type CropRegion } from "./crop-tool";
 
 // Dynamic import for R3F terrain — no SSR
 const Terrain3DView = dynamic(() => import("./terrain-3d"), { ssr: false });
+
+/**
+ * Draw the Journey overlay: numbered points (1-10) connected by dotted lines
+ * illustrating the probable path of a viewer's eyes across the image.
+ */
+function drawJourneyOverlay(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  points: { x: number; y: number; score: number }[]
+) {
+  if (points.length === 0) return;
+
+  // Scale the radius / font size relative to image dimensions
+  // so the overlay looks proportional on small and large images alike
+  const baseSize = Math.min(width, height);
+  const circleRadius = Math.max(14, baseSize * 0.025);
+  const fontSize = Math.max(14, Math.round(circleRadius * 1.1));
+
+  // ─── 1. Draw dotted connecting lines (between consecutive points) ───
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 170, 50, 0.85)";
+  ctx.lineWidth = Math.max(2, circleRadius * 0.18);
+  ctx.setLineDash([circleRadius * 0.6, circleRadius * 0.5]);
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // ─── 2. Draw numbered circles at each point ───
+  ctx.save();
+  ctx.font = `bold ${fontSize}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  points.forEach((p, i) => {
+    // Outer glow ring (subtle, fades with point index)
+    const glowAlpha = 0.35 * (1 - i / points.length * 0.4);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, circleRadius * 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255, 140, 30, ${glowAlpha * 0.4})`;
+    ctx.fill();
+
+    // Filled circle (orange, gradient from #ff7a00 to #ffb84d)
+    const grad = ctx.createRadialGradient(
+      p.x - circleRadius * 0.3, p.y - circleRadius * 0.3, circleRadius * 0.1,
+      p.x, p.y, circleRadius
+    );
+    grad.addColorStop(0, "#ffd27a");
+    grad.addColorStop(0.5, "#ff9a30");
+    grad.addColorStop(1, "#d96000");
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, circleRadius, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // White border
+    ctx.lineWidth = Math.max(1.5, circleRadius * 0.12);
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+
+    // Number (1-indexed)
+    ctx.fillStyle = "#1a0a00";
+    ctx.fillText(String(i + 1), p.x, p.y);
+  });
+  ctx.restore();
+}
 
 export interface CanvasAreaProps {
   image: HTMLImageElement | null;
@@ -402,6 +477,12 @@ export default function CanvasArea({
       octx.clearRect(0, 0, overlay.width, overlay.height);
       if (guidesActive && guideConfig.activeGuide) {
         drawGuides(octx, image.width, image.height, guideConfig, originalDataRef.current);
+      }
+
+      // Draw Journey overlay on the overlay canvas when Journey mode is active
+      if (showAnalysis && analysisMode === "journey" && originalDataRef.current) {
+        const journeyPoints = computeJourneyPoints(originalDataRef.current, sensitivity);
+        drawJourneyOverlay(octx, image.width, image.height, journeyPoints);
       }
     });
 

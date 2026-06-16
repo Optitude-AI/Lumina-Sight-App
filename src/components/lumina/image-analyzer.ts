@@ -384,7 +384,9 @@ function applyNegSpaceFast(
   }
 }
 
-// ─── Fast Journey — grid-sampled salient points ──────────────────────
+// ─── Fast Journey — dim image + subtle attention heatmap ────────────
+// The numbered path overlay is drawn on the overlay canvas (see canvas-area.tsx)
+// This function only handles the pixel-level image dimming + heatmap tint
 
 function applyJourneyFast(
   d: Uint8ClampedArray,
@@ -393,107 +395,213 @@ function applyJourneyFast(
   opacity: number,
   sensitivity: number
 ) {
-  // Precompute luminance
-  const lumMap = new Float32Array(width * height);
-  for (let i = 0; i < lumMap.length; i++) {
-    const pi = i * 4;
-    lumMap[i] = 0.299 * d[pi] + 0.587 * d[pi + 1] + 0.114 * d[pi + 2];
-  }
-
-  // Find journey points (local maxima of luminance in grid cells)
-  const step = Math.max(4, Math.round(12 - sensitivity));
-  const points: { x: number; y: number; lum: number }[] = [];
-
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      let maxLum = 0;
-      let maxX = x;
-      let maxY = y;
-      for (let dy = 0; dy < step && y + dy < height; dy++) {
-        for (let dx = 0; dx < step && x + dx < width; dx++) {
-          const l = lumMap[(y + dy) * width + (x + dx)];
-          if (l > maxLum) {
-            maxLum = l;
-            maxX = x + dx;
-            maxY = y + dy;
-          }
-        }
-      }
-      points.push({ x: maxX, y: maxY, lum: maxLum });
-    }
-  }
-
-  // Sort by luminance descending
-  points.sort((a, b) => b.lum - a.lum);
-
-  // Darken image slightly
-  const dimFactor = 1 - opacity * 0.6;
+  // Dim the image to make the overlay stand out
+  const dimFactor = 1 - opacity * 0.55;
   for (let i = 0; i < d.length; i += 4) {
     d[i] = d[i] * dimFactor;
     d[i + 1] = d[i + 1] * dimFactor;
     d[i + 2] = d[i + 2] * dimFactor;
   }
 
-  // Draw journey path
-  const numPoints = Math.min(points.length, Math.round(sensitivity * 8));
-  for (let i = 0; i < numPoints - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const t = i / numPoints;
+  // Add a subtle warm heatmap tint at high-attention areas
+  const radius = Math.max(1, Math.round(sensitivity * 3));
 
-    // Draw line between points using Bresenham
-    const dx = Math.abs(p2.x - p1.x);
-    const dy = Math.abs(p2.y - p1.y);
-    const sx = p1.x < p2.x ? 1 : -1;
-    const sy = p1.y < p2.y ? 1 : -1;
-    let err = dx - dy;
-    let cx = p1.x;
-    let cy = p1.y;
-
-    while (cx !== p2.x || cy !== p2.y) {
-      const fade = 1 - t * 0.5;
-      for (let gy = -2; gy <= 2; gy++) {
-        for (let gx = -2; gx <= 2; gx++) {
-          const nx = cx + gx;
-          const ny = cy + gy;
-          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            const dist = Math.sqrt(gx * gx + gy * gy);
-            const intensity = Math.max(0, 1 - dist / 3) * fade * opacity;
-            const idx = (ny * width + nx) * 4;
-            d[idx] = Math.min(255, d[idx] + 255 * intensity);
-            d[idx + 1] = Math.min(255, d[idx + 1] + 140 * intensity);
-            d[idx + 2] = Math.min(255, d[idx + 2] + 20 * intensity);
-          }
-        }
-      }
-
-      const e2 = 2 * err;
-      if (e2 > -dy) { err -= dy; cx += sx; }
-      if (e2 < dx) { err += dx; cy += sy; }
-    }
+  // Precompute luminance
+  const lum = new Float32Array(width * height);
+  for (let i = 0; i < lum.length; i++) {
+    const pi = i * 4;
+    lum[i] = 0.299 * d[pi] + 0.587 * d[pi + 1] + 0.114 * d[pi + 2];
   }
 
-  // Draw numbered circles at key points
-  for (let i = 0; i < Math.min(numPoints, 8); i++) {
-    const p = points[i];
-    const fade = 1 - (i / 8) * 0.5;
-    for (let gy = -6; gy <= 6; gy++) {
-      for (let gx = -6; gx <= 6; gx++) {
-        const nx = p.x + gx;
-        const ny = p.y + gy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const dist = Math.sqrt(gx * gx + gy * gy);
-          if (dist <= 6) {
-            const intensity = (1 - dist / 7) * fade * opacity;
-            const idx = (ny * width + nx) * 4;
-            d[idx] = Math.min(255, d[idx] + 255 * intensity);
-            d[idx + 1] = Math.min(255, d[idx + 1] + 160 * intensity);
-            d[idx + 2] = Math.min(255, d[idx + 2] + 30 * intensity);
-          }
-        }
+  // Compute local mean
+  const meanLum = separableBoxBlur(lum, width, height, radius);
+
+  // Compute local variance (contrast proxy)
+  const lumSq = new Float32Array(width * height);
+  for (let i = 0; i < lum.length; i++) lumSq[i] = lum[i] * lum[i];
+  const meanLumSq = separableBoxBlur(lumSq, width, height, radius);
+
+  // Apply subtle orange heatmap tint
+  const inv = 1 - opacity * 0.25;
+  for (let i = 0; i < lum.length; i++) {
+    const variance = Math.max(0, meanLumSq[i] - meanLum[i] * meanLum[i]);
+    const contrast = Math.sqrt(variance);
+    const attention = Math.min(1, contrast / 50);
+
+    // Color saturation bonus
+    const pi = i * 4;
+    const r = d[pi], g = d[pi + 1], b = d[pi + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+
+    const val = Math.min(1, (attention * 0.7 + sat * 0.3));
+
+    // Warm tint (orange) proportional to attention
+    const tint = val * opacity * 0.35;
+    d[pi] = Math.min(255, d[pi] * inv + 255 * tint);
+    d[pi + 1] = Math.min(255, d[pi + 1] * inv + 160 * tint);
+    d[pi + 2] = Math.min(255, d[pi + 2] * inv + 40 * tint);
+  }
+}
+
+/**
+ * Compute the 10 ordered eye-journey points for an image.
+ * Uses saliency (contrast + saturation + luminance) to find attention peaks,
+ * then orders them using a nearest-neighbor path starting from the top peak,
+ * simulating how a viewer's eye would naturally scan the image.
+ *
+ * Returns points in IMAGE coordinates (same scale as sourceData).
+ */
+export function computeJourneyPoints(
+  sourceData: ImageData,
+  sensitivity: number
+): { x: number; y: number; score: number }[] {
+  const { width, height } = sourceData;
+  const d = sourceData.data;
+
+  // Downsample for speed
+  const maxDim = 200;
+  const ratio = Math.min(1, maxDim / Math.max(width, height));
+  const sw = Math.round(width * ratio);
+  const sh = Math.round(height * ratio);
+
+  // Downsample to small canvas
+  const smallCanvas = document.createElement("canvas");
+  smallCanvas.width = sw;
+  smallCanvas.height = sh;
+  const sctx = smallCanvas.getContext("2d")!;
+
+  const fullCanvas = document.createElement("canvas");
+  fullCanvas.width = width;
+  fullCanvas.height = height;
+  const fctx = fullCanvas.getContext("2d")!;
+  fctx.putImageData(sourceData, 0, 0);
+  sctx.drawImage(fullCanvas, 0, 0, sw, sh);
+
+  const smallData = sctx.getImageData(0, 0, sw, sh);
+  const sd = smallData.data;
+
+  // Compute saliency map: contrast + saturation + luminance
+  const lum = new Float32Array(sw * sh);
+  for (let i = 0; i < lum.length; i++) {
+    const pi = i * 4;
+    lum[i] = 0.299 * sd[pi] + 0.587 * sd[pi + 1] + 0.114 * sd[pi + 2];
+  }
+
+  const blurRadius = Math.max(2, Math.round(sensitivity * 1.5));
+  const meanLum = separableBoxBlur(lum, sw, sh, blurRadius);
+  const lumSq = new Float32Array(sw * sh);
+  for (let i = 0; i < lum.length; i++) lumSq[i] = lum[i] * lum[i];
+  const meanLumSq = separableBoxBlur(lumSq, sw, sh, blurRadius);
+
+  const saliency = new Float32Array(sw * sh);
+  for (let i = 0; i < lum.length; i++) {
+    const variance = Math.max(0, meanLumSq[i] - meanLum[i] * meanLum[i]);
+    const contrast = Math.sqrt(variance);
+
+    const pi = i * 4;
+    const r = sd[pi], g = sd[pi + 1], b = sd[pi + 2];
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    const sat = maxC === 0 ? 0 : (maxC - minC) / maxC;
+
+    // Edge proximity bonus — eyes tend to look near edges
+    const x = i % sw;
+    const y = Math.floor(i / sw);
+    const edgeDist = Math.min(x, sw - 1 - x, y, sh - 1 - y);
+    const edgeBonus = Math.max(0, 1 - edgeDist / (Math.min(sw, sh) * 0.3)) * 0.15;
+
+    // Center bias — eyes naturally start near center
+    const cx = sw / 2, cy = sh / 2;
+    const centerDist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+    const centerBonus = Math.max(0, 1 - centerDist / (Math.min(sw, sh) * 0.6)) * 0.2;
+
+    saliency[i] = Math.min(1, (contrast / 40) * 0.4 + sat * 0.25 + (lum[i] / 255) * 0.15 + edgeBonus + centerBonus);
+  }
+
+  // Find top-N peak points using non-maximum suppression
+  const numTargets = 10;
+  const peaks: { x: number; y: number; score: number }[] = [];
+  const minDist = Math.min(sw, sh) / (numTargets * 0.6); // Minimum distance between peaks
+  const used = new Uint8Array(sw * sh);
+
+  // Sort all pixels by saliency descending
+  const indices = Array.from({ length: sw * sh }, (_, i) => i);
+  indices.sort((a, b) => saliency[b] - saliency[a]);
+
+  for (const idx of indices) {
+    if (peaks.length >= numTargets * 3) break; // Over-sample, then we'll pick the best 10
+    const px = idx % sw;
+    const py = Math.floor(idx / sw);
+
+    // Skip if too close to existing peak (non-max suppression)
+    let tooClose = false;
+    for (const p of peaks) {
+      const dx = px - p.x;
+      const dy = py - p.y;
+      if (dx * dx + dy * dy < minDist * minDist) {
+        tooClose = true;
+        break;
       }
     }
+    if (tooClose) continue;
+
+    peaks.push({ x: px, y: py, score: saliency[idx] });
   }
+
+  // Take top 10 by score
+  peaks.sort((a, b) => b.score - a.score);
+  const topPeaks = peaks.slice(0, numTargets);
+
+  // Order peaks using nearest-neighbor heuristic starting from the most salient
+  // This simulates the natural eye scanning path
+  if (topPeaks.length <= 1) {
+    return topPeaks.map(p => ({
+      x: Math.round(p.x / ratio),
+      y: Math.round(p.y / ratio),
+      score: p.score,
+    }));
+  }
+
+  const ordered: { x: number; y: number; score: number }[] = [];
+  const remaining = [...topPeaks];
+
+  // Start from the most salient point
+  ordered.push(remaining.shift()!);
+
+  while (remaining.length > 0) {
+    const last = ordered[ordered.length - 1];
+
+    // Find the nearest remaining point, with a preference for
+    // high-saliency points (weighted nearest-neighbor)
+    let bestIdx = 0;
+    let bestCost = Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const p = remaining[i];
+      const dx = p.x - last.x;
+      const dy = p.y - last.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Cost = distance / saliency — lower is better
+      // This balances proximity with visual importance
+      const cost = dist / Math.max(0.1, p.score);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestIdx = i;
+      }
+    }
+
+    ordered.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  // Scale back to original image coordinates
+  return ordered.map(p => ({
+    x: Math.round(p.x / ratio),
+    y: Math.round(p.y / ratio),
+    score: p.score,
+  }));
 }
 
 // ─── Separable Box Blur ──────────────────────────────────────────────
