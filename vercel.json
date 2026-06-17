@@ -1,5 +1,5 @@
 {
-  "regions": ["hkg1", "sin1", "hnd1"],
+  "regions": ["hkg1"],
   "headers": [
     {
       "source": "/(.*)",
