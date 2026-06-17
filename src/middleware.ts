@@ -53,8 +53,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Allow access to AI test route (diagnostic only)
-  if (pathname === "/api/ai-test") {
+  // Allow access to AI test routes (diagnostic only)
+  if (pathname === "/api/ai-test" || pathname === "/api/ai-test-edge") {
     return NextResponse.next();
   }
 
